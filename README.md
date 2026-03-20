@@ -2,13 +2,7 @@
 
 This document explains how to use the training, validation, and plotting scripts in this project.
 
-## 1. Go to the project directory
-
-```bash
-cd /BiO/Live/rooter/Downloads/C_elegans_UNet/3d_unet
-```
-
-## 2. Train the model
+## 1. Train the model
 
 ```bash
 python train_3d_unet.py
@@ -39,7 +33,7 @@ MAX_VAL_VOLUMES = None
 
 This will validate all volumes, but training will be slower.
 
-## 3. Evaluate a single model
+## 2. Evaluate a single model
 
 Simplest command (uses default arguments):
 
@@ -77,7 +71,7 @@ Notes:
 - `validate.py` can compute validation loss with `bce`, `focal`, or `dicefocal`, but model selection during training is based on validation Dice, not validation loss
 - `Dice+Focal` loss is usually less smooth than BCE, so validation loss may plateau or fluctuate even when Dice is still improving
 
-## 4. Validation output files
+## 3. Validation output files
 
 After running `validate.py`, the script usually generates:
 
@@ -87,7 +81,7 @@ After running `validate.py`, the script usually generates:
 - `validation_visualization.png`: 6-panel visualization (image, label, prediction, probability map, label overlay, prediction overlay)
 - `validation_curves_<model_name>.png`: PR/ROC curves (only when `--plot-curves` is enabled)
 
-## 5. Plot training/validation curves
+## 4. Plot training/validation curves
 
 ```bash
 python plot_validation.py loss
@@ -115,9 +109,9 @@ cp validation_report_unet_3d_best.txt validation_report.txt
 python plot_validation.py table
 ```
 
-## 6. Common issues
+## 5. Common issues
 
-### 6.1 GPU out of memory
+### 5.1 GPU out of memory
 
 Use smaller patch size and stride:
 
@@ -125,7 +119,7 @@ Use smaller patch size and stride:
 python validate.py --patch-size 8 256 256 --stride 4 128 128
 ```
 
-### 6.2 Need higher Recall
+### 5.2 Need higher Recall
 
 Lower the threshold:
 
@@ -133,7 +127,7 @@ Lower the threshold:
 python validate.py --threshold 0.3
 ```
 
-### 6.3 Need higher Precision
+### 5.3 Need higher Precision
 
 Raise the threshold:
 
@@ -141,7 +135,7 @@ Raise the threshold:
 python validate.py --threshold 0.7
 ```
 
-### 6.4 Validation loss does not keep decreasing with Dice+Focal
+### 5.4 Validation loss does not keep decreasing with Dice+Focal
 
 This is common and does not automatically mean training failed.
 
@@ -152,7 +146,7 @@ Check these points first:
 - Dice+Focal is more sensitive to learning rate than BCE; if needed, reduce the initial LR from `1e-4` to `3e-5`
 - Validation loss is averaged over sliding-window patches, while Dice is computed on the reconstructed full volume, so they are related but not identical objectives
 
-## 7. Dependencies
+## 6. Dependencies
 
 ```bash
 pip install torch torchvision
