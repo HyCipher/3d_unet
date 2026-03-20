@@ -15,10 +15,29 @@ python train_3d_unet.py
 ```
 
 The training script will:
+
 - Save model checkpoints in `models/`
+- Use `DiceFocalLoss(alpha=0.25, gamma=2.0, dice_weight=0.8, focal_weight=1.0)` by default
+- Use `Adam(lr=1e-4)` and `ReduceLROnPlateau` driven by validation Dice
+- Save `./models/unet_3d_best.pth` based on the best validation Dice
 - Automatically record training loss in `training_loss*.json`
 - Automatically record validation metrics in `validation_history*.json`
 - Use timestamped JSON filenames when the default files already exist (to avoid overwriting)
+
+Current validation behavior inside training:
+
+- Validate every 10 epochs
+- Also run validation at epoch 1 when training from scratch
+- By default only validate the first validation volume during training for speed (`MAX_VAL_VOLUMES = 1` in `train_3d_unet.py`)
+- Use validation patch size `16 512 512` and stride `8 256 256`
+
+If you want more stable validation curves during training, edit `train_3d_unet.py` and set:
+
+```python
+MAX_VAL_VOLUMES = None
+```
+
+This will validate all volumes, but training will be slower.
 
 ## 3. Evaluate a single model
 
@@ -29,6 +48,7 @@ python validate.py
 ```
 
 Default model path:
+
 - `./models/unet_3d_best.pth`
 
 Common custom example:
@@ -46,14 +66,21 @@ python validate.py \
 ```
 
 Optional arguments:
+
 - `--loss-type`: `none` / `bce` / `focal` / `dicefocal`
 - `--save-results` or `--no-save-results`
 - `--visualize` or `--no-visualize`
 - `--plot-curves`
 
+Notes:
+
+- `validate.py` can compute validation loss with `bce`, `focal`, or `dicefocal`, but model selection during training is based on validation Dice, not validation loss
+- `Dice+Focal` loss is usually less smooth than BCE, so validation loss may plateau or fluctuate even when Dice is still improving
+
 ## 4. Validation output files
 
 After running `validate.py`, the script usually generates:
+
 - `validation_report_<model_name>.txt`: validation summary report
 - `validation_results/pred_*.tif`: binary prediction files
 - `validation_results/prob_*.tif`: probability maps
@@ -67,13 +94,19 @@ python plot_validation.py loss
 python plot_validation.py losscompare
 python plot_validation.py allmetrics
 python plot_validation.py table
+
 ```
 
 Mode descriptions:
+
 - `loss`: training loss curve
 - `losscompare`: training loss vs validation loss
 - `allmetrics`: Dice/IoU/F1/Precision/Recall/Specificity curves
 - `table`: read summary table from `validation_report.txt`
+
+Interpretation note:
+
+- `losscompare` mixes training patch loss and validation-time sliding-window patch loss; for checkpoint selection, prefer Dice/IoU/F1 over loss alone
 
 If your report file is named `validation_report_<model_name>.txt`, copy it first:
 
@@ -85,6 +118,7 @@ python plot_validation.py table
 ## 6. Common issues
 
 ### 6.1 GPU out of memory
+
 Use smaller patch size and stride:
 
 ```bash
@@ -92,6 +126,7 @@ python validate.py --patch-size 8 256 256 --stride 4 128 128
 ```
 
 ### 6.2 Need higher Recall
+
 Lower the threshold:
 
 ```bash
@@ -99,11 +134,23 @@ python validate.py --threshold 0.3
 ```
 
 ### 6.3 Need higher Precision
+
 Raise the threshold:
 
 ```bash
 python validate.py --threshold 0.7
 ```
+
+### 6.4 Validation loss does not keep decreasing with Dice+Focal
+
+This is common and does not automatically mean training failed.
+
+Check these points first:
+
+- Look at validation Dice/IoU/F1, not validation loss alone
+- If training uses `MAX_VAL_VOLUMES = 1`, validation curves can be noisy; use `None` for full validation
+- Dice+Focal is more sensitive to learning rate than BCE; if needed, reduce the initial LR from `1e-4` to `3e-5`
+- Validation loss is averaged over sliding-window patches, while Dice is computed on the reconstructed full volume, so they are related but not identical objectives
 
 ## 7. Dependencies
 

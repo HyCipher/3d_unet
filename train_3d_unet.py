@@ -83,18 +83,24 @@ class FocalLoss(nn.Module):
         inputs: logits from model (not sigmoid applied)
         targets: binary labels (0 or 1)
         """
+        targets = targets.float()
         sigmoid_inputs = torch.sigmoid(inputs)
-        
+
         # Cross entropy
         bce = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
-        
+
         # Focal term: (1 - p_t)^gamma
         p_t = torch.where(targets == 1, sigmoid_inputs, 1 - sigmoid_inputs)
         focal_weight = (1 - p_t) ** self.gamma
-        
+
+        if self.alpha is None:
+            alpha_t = 1.0
+        else:
+            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+
         # Focal loss
-        focal_loss = self.alpha * focal_weight * bce
-        
+        focal_loss = alpha_t * focal_weight * bce
+
         return focal_loss.mean()
     
     
@@ -102,13 +108,14 @@ def dice_loss(inputs, targets, smooth=1e-6):
     """Compute Dice loss (1 - Dice coefficient) using logits as input."""
     # apply sigmoid to logits
     inputs = torch.sigmoid(inputs)
-    inputs_flat = inputs.contiguous().view(-1)
-    targets_flat = targets.contiguous().view(-1)
+    targets = targets.float()
+    inputs_flat = inputs.contiguous().view(inputs.shape[0], -1)
+    targets_flat = targets.contiguous().view(targets.shape[0], -1)
 
-    intersection = (inputs_flat * targets_flat).sum()
-    union = inputs_flat.sum() + targets_flat.sum()
+    intersection = (inputs_flat * targets_flat).sum(dim=1)
+    union = inputs_flat.sum(dim=1) + targets_flat.sum(dim=1)
     dice = (2. * intersection + smooth) / (union + smooth)
-    return 1.0 - dice
+    return 1.0 - dice.mean()
 
 
 class DiceFocalLoss(nn.Module):
@@ -447,6 +454,13 @@ def train():
     
     # 学习权重调整（如果使用组合损失，可以适当调整权重）
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="max",
+        factor=0.5,
+        patience=2,
+        min_lr=1e-6,
+    )
 
     # For tracking best validation score
     best_val_dice = 0.0
@@ -500,7 +514,8 @@ def train():
                 epoch_loss += loss.item()
 
             avg_epoch_loss = epoch_loss / len(loader)
-            print(f"Epoch [{epoch+1}/{num_epochs}]  Loss: {avg_epoch_loss:.4f}")
+            current_lr = optimizer.param_groups[0]["lr"]
+            print(f"Epoch [{epoch+1}/{num_epochs}]  Loss: {avg_epoch_loss:.4f}  LR: {current_lr:.2e}")
 
             # Save per-epoch training loss so it can be plotted independently.
             training_loss_history.append({
@@ -596,6 +611,9 @@ def train():
                     f"Recall: {val_metrics['recall']:.4f}, "
                     f"Specificity: {val_metrics['specificity']:.4f}"
                 )
+
+                scheduler.step(val_metrics['dice'])
+                print(f"Scheduler updated by validation Dice; next LR: {optimizer.param_groups[0]['lr']:.2e}")
 
                 # Save model every 10 epochs
                 model_path = f"./models/unet_3d_epoch_{epoch+1}.pth"
