@@ -592,13 +592,15 @@ def print_metrics(train_metrics, val_metrics):
 
 def log_validation_to_wandb(train_metrics, val_metrics, epoch):
     """Send validation metrics to wandb."""
+    train_metrics = train_metrics or {}
     payload = {
-        "train_dice": train_metrics.get("train_dice"),
-        "train_iou": train_metrics.get("train_iou"),
-        "train_f1": train_metrics.get("train_f1"),
-        "train_precision": train_metrics.get("train_precision"),
-        "train_recall": train_metrics.get("train_recall"),
-        "train_specificity": train_metrics.get("train_specificity"),
+        "epoch": epoch,
+        "train_dice": train_metrics.get["dice"],
+        "train_iou": train_metrics.get["iou"],
+        "train_f1": train_metrics.get["f1"],
+        "train_precision": train_metrics.get["precision"],
+        "train_recall": train_metrics.get["recall"],
+        "train_specificity": train_metrics.get["specificity"],
         "val_dice": val_metrics["dice"],
         "val_iou": val_metrics["iou"],
         "val_f1": val_metrics["f1"],
@@ -742,7 +744,7 @@ def train():
                 save_validation_history(val_history, validation_history_path)
 
                 print_metrics(train_metrics, val_metrics)
-                log_validation_to_wandb(val_metrics, epoch + 1)
+                log_validation_to_wandb(train_metrics, val_metrics, epoch + 1)
 
                 scheduler.step(val_metrics['dice'])
                 print(f"Scheduler updated by validation Dice; next LR: {optimizer.param_groups[0]['lr']:.2e}")
