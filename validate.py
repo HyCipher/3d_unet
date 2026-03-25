@@ -265,7 +265,7 @@ def evaluate_model(
     threshold=0.5,
     loss_type="dicefocal",
     save_results=True,
-    plot_curves=False,
+    plot_curves=True,
     save_visualization=True,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

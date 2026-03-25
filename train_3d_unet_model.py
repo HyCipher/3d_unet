@@ -2,7 +2,7 @@ import os
 import glob
 import json
 from datetime import datetime
-from turtle import pd
+import wandb
 import tifffile as tiff
 import numpy as np
 import torch
@@ -384,6 +384,250 @@ class Tif3DPatchDataset(Dataset):
 # =========================
 # Training
 # =========================
+def init_model_and_lr(device, pretrained_path="./models/unet_3d_best.pth"):
+    """Create model and optionally load a pretrained checkpoint."""
+    model = UNet().to(device)
+    if os.path.exists(pretrained_path):
+        model.load_state_dict(torch.load(pretrained_path))
+        print(f"Loaded pre-trained model from {pretrained_path}")
+        return model, 1e-4, True
+
+    print("No pre-trained model found, starting from scratch")
+    return model, 1e-4, False
+
+
+def get_control_panel():
+    """Centralized training/validation hyperparameters."""
+    return {
+        "validate_every": 10,
+        "eval_train_set": True,
+        "max_val_volumes": None,
+        "val_patch_size": (16, 512, 512),
+        "val_stride": (8, 256, 256),
+        "val_threshold": 0.1,
+        "dice_weight": 0.8,
+        "focal_weight": 1.0,
+        "num_epochs": 50,
+        "loss_type": "bce",  # "bce" | "focal" | "dicefocal"
+    }
+
+
+def build_criterion(loss_type, dice_weight, focal_weight):
+    """Build loss function from LOSS_TYPE."""
+    if loss_type == "bce":
+        return nn.BCEWithLogitsLoss()
+    if loss_type == "focal":
+        return FocalLoss(alpha=0.25, gamma=2.0)
+    if loss_type == "dicefocal":
+        return DiceFocalLoss(
+            alpha=0.25,
+            gamma=2.0,
+            dice_weight=dice_weight,
+            focal_weight=focal_weight,
+        )
+    raise ValueError(f"Unknown LOSS_TYPE: {loss_type}")
+
+
+def create_optimizer_and_scheduler(model, lr):
+    """Create optimizer and LR scheduler."""
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="max",
+        factor=0.5,
+        patience=2,
+        min_lr=1e-6,
+    )
+    return optimizer, scheduler
+
+
+def resolve_history_paths():
+    """Avoid overwriting history files across different runs."""
+    validation_history_path = "validation_history.json"
+    if os.path.exists(validation_history_path):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        validation_history_path = f"validation_history_{timestamp}.json"
+        print(
+            "Detected existing validation_history.json; "
+            f"saving current run to {validation_history_path}"
+        )
+
+    training_loss_path = "training_loss.json"
+    if os.path.exists(training_loss_path):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        training_loss_path = f"training_loss_{timestamp}.json"
+        print(
+            "Detected existing training_loss.json; "
+            f"saving current run to {training_loss_path}"
+        )
+
+    return validation_history_path, training_loss_path
+
+
+def build_wandb_config(loader, lr, controls):
+    """Build wandb config from runtime values."""
+    config = {
+        "architecture": "3D UNet",
+        "epochs": controls["num_epochs"],
+        "batch_size": loader.batch_size,
+        "learning_rate": lr,
+        "patch_size": loader.dataset.patch_size,
+        "val_patch_size": controls["val_patch_size"],
+        "val_stride": controls["val_stride"],
+        "val_threshold": controls["val_threshold"],
+        "loss_function": controls["loss_type"],
+        "validate_every": controls["validate_every"],
+        "eval_train_set": controls["eval_train_set"],
+    }
+    if controls["loss_type"] == "dicefocal":
+        config["dice_weight"] = controls["dice_weight"]
+        config["focal_weight"] = controls["focal_weight"]
+    return config
+
+
+def run_sanity_check(model, dataset, device):
+    """Quick prediction sanity check on one training patch."""
+    model.eval()
+    with torch.no_grad():
+        x_test, y_test = dataset[0]
+        x_test = x_test.unsqueeze(0).to(device)
+        y_test = y_test.to(device)
+
+        pred_test = torch.sigmoid(model(x_test))
+        print("Sanity check:")
+        print(
+            " pred mean:", pred_test.mean().item(),
+            " pred max:", pred_test.max().item(),
+            " gt mean:", y_test.mean().item(),
+            " gt max:", y_test.max().item(),
+        )
+
+
+def train_one_epoch(model, loader, criterion, optimizer, device):
+    """Run one training epoch and return avg loss."""
+    model.train()
+    epoch_loss = 0.0
+    for x, y in loader:
+        x = x.to(device)
+        y = y.to(device)
+
+        pred = model(x)
+        loss = criterion(pred, y)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        epoch_loss += loss.item()
+    return epoch_loss / len(loader)
+
+
+def evaluate_with_optional_limit(model, dataset, device, controls, criterion):
+    """Evaluate validation dataset with optional volume cap for speed."""
+    original_volumes = dataset.volumes
+    original_labels = dataset.labels
+    max_val_volumes = controls["max_val_volumes"]
+
+    if max_val_volumes is not None:
+        dataset.volumes = dataset.volumes[:max_val_volumes]
+        dataset.labels = dataset.labels[:max_val_volumes]
+
+    metrics = validate_with_full_metrics(
+        model,
+        dataset,
+        device,
+        patch_size=controls["val_patch_size"],
+        stride=controls["val_stride"],
+        threshold=controls["val_threshold"],
+        criterion=criterion,
+    )
+
+    dataset.volumes = original_volumes
+    dataset.labels = original_labels
+    return metrics
+
+
+def maybe_evaluate_train_set(model, train_eval_dataset, device, controls, criterion):
+    """Optionally evaluate training set to monitor overfitting."""
+    if not controls["eval_train_set"]:
+        return None
+
+    return validate_with_full_metrics(
+        model,
+        train_eval_dataset,
+        device,
+        patch_size=controls["val_patch_size"],
+        stride=controls["val_stride"],
+        threshold=controls["val_threshold"],
+        criterion=criterion,
+    )
+
+
+def print_metrics(train_metrics, val_metrics):
+    """Console-friendly metrics output."""
+    if train_metrics is not None:
+        print(
+            "Train Metrics -> "
+            f"Dice: {train_metrics['dice']:.4f}, "
+            f"IoU: {train_metrics['iou']:.4f}, "
+            f"F1: {train_metrics['f1']:.4f}, "
+            f"Precision: {train_metrics['precision']:.4f}, "
+            f"Recall: {train_metrics['recall']:.4f}, "
+            f"Specificity: {train_metrics['specificity']:.4f}"
+        )
+
+    if "loss" in val_metrics:
+        print(f"Validation Loss: {val_metrics['loss']:.4f}")
+
+    print(
+        "Validation Metrics -> "
+        f"Dice: {val_metrics['dice']:.4f}, "
+        f"IoU: {val_metrics['iou']:.4f}, "
+        f"F1: {val_metrics['f1']:.4f}, "
+        f"Precision: {val_metrics['precision']:.4f}, "
+        f"Recall: {val_metrics['recall']:.4f}, "
+        f"Specificity: {val_metrics['specificity']:.4f}"
+    )
+
+
+def log_validation_to_wandb(train_metrics, val_metrics, epoch):
+    """Send validation metrics to wandb."""
+    payload = {
+        "train_dice": train_metrics.get("train_dice"),
+        "train_iou": train_metrics.get("train_iou"),
+        "train_f1": train_metrics.get("train_f1"),
+        "train_precision": train_metrics.get("train_precision"),
+        "train_recall": train_metrics.get("train_recall"),
+        "train_specificity": train_metrics.get("train_specificity"),
+        "val_dice": val_metrics["dice"],
+        "val_iou": val_metrics["iou"],
+        "val_f1": val_metrics["f1"],
+        "val_precision": val_metrics["precision"],
+        "val_recall": val_metrics["recall"],
+        "val_specificity": val_metrics["specificity"],
+    }
+    
+    if "loss" in val_metrics:
+        payload["val_loss"] = val_metrics["loss"]
+    wandb.log(payload)
+
+
+def save_epoch_model(model, epoch):
+    """Save periodic epoch checkpoint."""
+    model_path = f"./models/unet_3d_epoch_{epoch}.pth"
+    torch.save(model.state_dict(), model_path)
+    print(f"Model saved: {model_path}")
+
+
+def maybe_save_best_model(model, val_metrics, best_val_dice):
+    """Save best model by validation dice and return updated best score."""
+    if val_metrics["dice"] > best_val_dice:
+        best_val_dice = val_metrics["dice"]
+        torch.save(model.state_dict(), "./models/unet_3d_best.pth")
+        print(f"Best model saved! (Dice: {best_val_dice:.4f})")
+    return best_val_dice
+
+
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -428,94 +672,36 @@ def train():
         augment=False
     )
 
-    model = UNet().to(device)
-
-    # 加载预训练模型（如果存在）
-    pretrained_path = "./models/unet_3d_best.pth"
-    if os.path.exists(pretrained_path):
-        model.load_state_dict(torch.load(pretrained_path))
-        print(f"Loaded pre-trained model from {pretrained_path}")
-        # 继续训练时降低学习率
-        lr = 1e-4
-        loaded_pretrained = True
-    else:
-        print("No pre-trained model found, starting from scratch")
-        lr = 1e-4
-        loaded_pretrained = False
-
-    # ====== 损失函数设置 ======
-    # 1. 二元交叉熵损失（不考虑类别不平衡时的基础选择）
-    # criterion = nn.BCEWithLogitsLoss()
-    # 2. Focal Loss（推荐用于小目标/高度不平衡）
-    # criterion = FocalLoss(alpha=0.25, gamma=2.0)
-
-    # 3. 组合 Dice Loss + Focal Loss（推荐用于小目标/高度不平衡），可以根据需要调整 dice_weight 和 focal_weight 的比例
-    criterion = DiceFocalLoss(alpha=0.25, gamma=2.0, dice_weight=0.8, focal_weight=1.0)
-    
-    # 学习权重调整（如果使用组合损失，可以适当调整权重）
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="max",
-        factor=0.5,
-        patience=2,
-        min_lr=1e-6,
+    model, lr, loaded_pretrained = init_model_and_lr(device)
+    controls = get_control_panel()
+    criterion = build_criterion(
+        controls["loss_type"],
+        controls["dice_weight"],
+        controls["focal_weight"],
     )
+    optimizer, scheduler = create_optimizer_and_scheduler(model, lr)
 
     # For tracking best validation score
     best_val_dice = 0.0
     val_history = []
     training_loss_history = []
 
-    # Avoid overwriting existing validation history from previous runs.
-    validation_history_path = "validation_history.json"
-    if os.path.exists(validation_history_path):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        validation_history_path = f"validation_history_{timestamp}.json"
-        print(
-            "Detected existing validation_history.json; "
-            f"saving current run to {validation_history_path}"
-        )
+    validation_history_path, training_loss_path = resolve_history_paths()
+    wandb_config = build_wandb_config(loader, lr, controls)
 
-    # Avoid overwriting existing training loss history from previous runs.
-    training_loss_path = "training_loss.json"
-    if os.path.exists(training_loss_path):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        training_loss_path = f"training_loss_{timestamp}.json"
-        print(
-            "Detected existing training_loss.json; "
-            f"saving current run to {training_loss_path}"
-        )
-
-    # ====== Validation speed controls ======
-    VALIDATE_EVERY = 10         # 每隔多少 epoch 进行一次验证（过于频繁会显著增加训练时间）
-    EVAL_TRAIN_SET = False      # True 会额外评估训练集，速度明显变慢
-    MAX_VAL_VOLUMES = None         # 每次最多验证多少个 volume
-    VAL_PATCH_SIZE = (16, 512, 512)
-    VAL_STRIDE = (8, 256, 256)  # 比 (4,128,128) 快很多
-
-    num_epochs = 100
+    wandb.init(
+        project="c_elegans_3d_unet",
+        name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        config=wandb_config
+    )
     try:
-        for epoch in range(num_epochs):
-            model.train()
-            epoch_loss = 0.0
-
-            for x, y in loader:
-                x = x.to(device)
-                y = y.to(device)
-
-                pred = model(x)
-                loss = criterion(pred, y)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                epoch_loss += loss.item()
-
-            avg_epoch_loss = epoch_loss / len(loader)
+        for epoch in range(controls["num_epochs"]):
+            avg_epoch_loss = train_one_epoch(model, loader, criterion, optimizer, device)
             current_lr = optimizer.param_groups[0]["lr"]
-            print(f"Epoch [{epoch+1}/{num_epochs}]  Loss: {avg_epoch_loss:.4f}  LR: {current_lr:.2e}")
+            print(
+                f"Epoch [{epoch+1}/{controls['num_epochs']}]  "
+                f"Loss: {avg_epoch_loss:.4f}  LR: {current_lr:.2e}"
+            )
 
             # Save per-epoch training loss so it can be plotted independently.
             training_loss_history.append({
@@ -523,60 +709,27 @@ def train():
                 "train_loss": avg_epoch_loss
             })
             save_training_loss_history(training_loss_history, training_loss_path)
-            
-            # ====== Sanity check ======
-            model.eval()
-            with torch.no_grad():
-                x_test, y_test = dataset[0]   # 直接拿训练集里的一个 patch
-                x_test = x_test.unsqueeze(0).to(device)  # [1,1,D,H,W]
-                y_test = y_test.to(device)
-
-                pred_test = model(x_test)
-                pred_test = torch.sigmoid(pred_test)
-
-                print("Sanity check:")
-                print(
-                    " pred mean:", pred_test.mean().item(),
-                    " pred max:", pred_test.max().item(),
-                    " gt mean:", y_test.mean().item(),
-                    " gt max:", y_test.max().item()
-                )
+            wandb.log({"train_loss": avg_epoch_loss, "epoch": epoch + 1})
+            run_sanity_check(model, dataset, device)
                 
             # 每隔 VALIDATE_EVERY 个 epoch 进行验证并保存模型
             # 从头训练时 epoch 1 额外做一次，导入预训练模型时则不需要
-            if (epoch + 1) % VALIDATE_EVERY == 0 or (epoch == 0 and not loaded_pretrained):
-                if EVAL_TRAIN_SET:
-                    train_metrics = validate_with_full_metrics(
-                        model,
-                        train_eval_dataset,
-                        device,
-                        patch_size=VAL_PATCH_SIZE,
-                        stride=VAL_STRIDE,
-                        threshold=0.1,
-                        criterion=criterion
-                    )
-                else:
-                    train_metrics = None
+            if (epoch + 1) % controls["validate_every"] == 0 or (epoch == 0 and not loaded_pretrained):
+                train_metrics = maybe_evaluate_train_set(
+                    model,
+                    train_eval_dataset,
+                    device,
+                    controls,
+                    criterion,
+                )
 
-                # 只取前 MAX_VAL_VOLUMES 个 volume 做快速验证
-                original_val_volumes = val_dataset.volumes
-                original_val_labels = val_dataset.labels
-                if MAX_VAL_VOLUMES is not None:
-                    val_dataset.volumes = val_dataset.volumes[:MAX_VAL_VOLUMES]
-                    val_dataset.labels = val_dataset.labels[:MAX_VAL_VOLUMES]
-
-                val_metrics = validate_with_full_metrics(
+                val_metrics = evaluate_with_optional_limit(
                     model,
                     val_dataset,
                     device,
-                    patch_size=VAL_PATCH_SIZE,
-                    stride=VAL_STRIDE,
-                    threshold=0.1,
-                    criterion=criterion
+                    controls,
+                    criterion,
                 )
-
-                val_dataset.volumes = original_val_volumes
-                val_dataset.labels = original_val_labels
 
                 history_item = {
                     "epoch": epoch + 1,
@@ -588,43 +741,14 @@ def train():
                 val_history.append(history_item)
                 save_validation_history(val_history, validation_history_path)
 
-                if train_metrics is not None:
-                    print(
-                        "Train Metrics -> "
-                        f"Dice: {train_metrics['dice']:.4f}, "
-                        f"IoU: {train_metrics['iou']:.4f}, "
-                        f"F1: {train_metrics['f1']:.4f}, "
-                        f"Precision: {train_metrics['precision']:.4f}, "
-                        f"Recall: {train_metrics['recall']:.4f}, "
-                        f"Specificity: {train_metrics['specificity']:.4f}"
-                    )
-
-                if 'loss' in val_metrics:
-                    print(f"Validation Loss: {val_metrics['loss']:.4f}")
-
-                print(
-                    "Validation Metrics -> "
-                    f"Dice: {val_metrics['dice']:.4f}, "
-                    f"IoU: {val_metrics['iou']:.4f}, "
-                    f"F1: {val_metrics['f1']:.4f}, "
-                    f"Precision: {val_metrics['precision']:.4f}, "
-                    f"Recall: {val_metrics['recall']:.4f}, "
-                    f"Specificity: {val_metrics['specificity']:.4f}"
-                )
+                print_metrics(train_metrics, val_metrics)
+                log_validation_to_wandb(val_metrics, epoch + 1)
 
                 scheduler.step(val_metrics['dice'])
                 print(f"Scheduler updated by validation Dice; next LR: {optimizer.param_groups[0]['lr']:.2e}")
 
-                # Save model every 10 epochs
-                model_path = f"./models/unet_3d_epoch_{epoch+1}.pth"
-                torch.save(model.state_dict(), model_path)
-                print(f"Model saved: {model_path}")
-                
-                # Save best model
-                if val_metrics['dice'] > best_val_dice:
-                    best_val_dice = val_metrics['dice']
-                    torch.save(model.state_dict(), "./models/unet_3d_best.pth")
-                    print(f"Best model saved! (Dice: {best_val_dice:.4f})")
+                save_epoch_model(model, epoch + 1)
+                best_val_dice = maybe_save_best_model(model, val_metrics, best_val_dice)
 
         if val_history:
             save_validation_history(val_history, validation_history_path)
@@ -633,7 +757,8 @@ def train():
         if training_loss_history:
             save_training_loss_history(training_loss_history, training_loss_path)
             print(f"Training loss history saved to: {training_loss_path}")
-            
+        wandb.finish()
+
     except KeyboardInterrupt:
         print("Training interrupted by user.")
         torch.save(model.state_dict(), "./models/unet_3d_interrupted.pth")
@@ -647,7 +772,7 @@ def train():
         if training_loss_history:
             save_training_loss_history(training_loss_history, training_loss_path)
             print(f"Training loss history saved to: {training_loss_path}")
-        
+        wandb.finish()
 
 
 if __name__ == "__main__":
