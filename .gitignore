@@ -2,7 +2,6 @@ __pycache__/
 data/
 models/
 output/
-CHANGES_SUMMARY.md
 *.json
 wandb/
 validation_results/

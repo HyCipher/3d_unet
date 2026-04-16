@@ -15,6 +15,11 @@
 python validate.py
 ```
 
+启用 wandb 上传（指标 + 切片图）：
+```bash
+python validate.py --wandb
+```
+
 默认参数等价于：
 ```bash
 python validate.py \
@@ -29,6 +34,22 @@ python validate.py \
   --visualize
 ```
 
+带 wandb 的完整示例：
+```bash
+python validate.py \
+  --model ./models/unet_3d_best.pth \
+  --val-img-dir data/validation/images \
+  --val-label-dir data/validation/labels \
+  --patch-size 16 512 512 \
+  --stride 8 256 256 \
+  --threshold 0.5 \
+  --loss-type dicefocal \
+  --plot-curves \
+  --wandb \
+  --wandb-project c_elegans_3d_unet_validation \
+  --wandb-run-name validate_unet_3d_best
+```
+
 ### 可用参数
 - `--model`: 模型路径
 - `--val-img-dir`: 验证图像目录
@@ -40,6 +61,9 @@ python validate.py \
 - `--save-results` / `--no-save-results`: 是否保存 `pred_*.tif` 和 `prob_*.tif`
 - `--visualize` / `--no-visualize`: 是否保存 6 图可视化
 - `--plot-curves`: 生成 PR/ROC 曲线图
+- `--wandb`: 上传验证指标和图像到 wandb
+- `--wandb-project`: 指定 wandb 项目名（默认 `c_elegans_3d_unet_validation`）
+- `--wandb-run-name`: 指定 wandb run 名（默认 `validate_<model_name>`）
 
 ### 输出文件
 1. `validation_report_<model_name>.txt`
@@ -47,6 +71,18 @@ python validate.py \
 3. `validation_results/prob_*.tif`
 4. `validation_visualization.png`
 5. `validation_curves_<model_name>.png`（仅 `--plot-curves`）
+
+### wandb 上传内容（仅 `--wandb`）
+- 每个验证样本的指标：Dice / IoU / F1 / Precision / Recall / Specificity（及可选 loss）
+- 每个样本的 3D 中心切片图：
+  - 原图 `validation/original_slice`
+  - 真值 `validation/ground_truth_slice`
+  - 预测 `validation/prediction_slice`
+  - 概率图 `validation/probability_slice`
+- 汇总图像（若存在）：
+  - `validation/summary_visualization`（`validation_visualization.png`）
+  - `validation/curves`（`validation_curves_<model_name>.png`）
+- 全集平均指标：`validation/dice`、`validation/iou` 等
 
 ### `validation_visualization.png` 内容
 固定 6 个子图：
@@ -177,10 +213,21 @@ python validate.py --threshold 0.7
 python validate.py --no-save-results --no-visualize
 ```
 
+### Q5: wandb 相关如何配置？
+先登录：
+```bash
+wandb login
+```
+
+再运行：
+```bash
+python validate.py --wandb
+```
+
 ---
 
 ## 依赖
 ```bash
 pip install torch torchvision
-pip install scikit-learn scipy numpy matplotlib tifffile
+pip install scikit-learn scipy numpy matplotlib tifffile wandb
 ```

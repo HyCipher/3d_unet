@@ -1,0 +1,9 @@
+=== Validation Summary ===
+Model: ./models/unet_3d_best.pth
+Dice: 0.136125
+IoU: 0.073033
+F1: 0.136125
+Precision: 0.076003
+Recall: 0.651447
+Specificity: 0.993822
+Validation Loss (mean): 0.775844

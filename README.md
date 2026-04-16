@@ -59,12 +59,32 @@ python validate.py \
   --plot-curves
 ```
 
+Enable wandb upload (metrics + validation slice images):
+
+```bash
+python validate.py --wandb
+```
+
+Example with explicit wandb settings:
+
+```bash
+python validate.py \
+  --model ./models/unet_3d_best.pth \
+  --plot-curves \
+  --wandb \
+  --wandb-project c_elegans_3d_unet_validation \
+  --wandb-run-name validate_unet_3d_best
+```
+
 Optional arguments:
 
 - `--loss-type`: `none` / `bce` / `focal` / `dicefocal`
 - `--save-results` or `--no-save-results`
 - `--visualize` or `--no-visualize`
 - `--plot-curves`
+- `--wandb`: upload validation metrics and images to wandb
+- `--wandb-project`: wandb project name (default: `c_elegans_3d_unet_validation`)
+- `--wandb-run-name`: optional run name (default: `validate_<model_name>`)
 
 Notes:
 
@@ -80,6 +100,13 @@ After running `validate.py`, the script usually generates:
 - `validation_results/prob_*.tif`: probability maps
 - `validation_visualization.png`: 6-panel visualization (image, label, prediction, probability map, label overlay, prediction overlay)
 - `validation_curves_<model_name>.png`: PR/ROC curves (only when `--plot-curves` is enabled)
+
+When `--wandb` is enabled, `validate.py` also uploads:
+
+- Per-sample metrics
+- Center-slice images for each sample (original / label / prediction / probability)
+- Summary PNGs (`validation_visualization.png` and PR/ROC curves if generated)
+- Dataset-level mean validation metrics
 
 ## 4. Plot training/validation curves
 
@@ -146,9 +173,15 @@ Check these points first:
 - Dice+Focal is more sensitive to learning rate than BCE; if needed, reduce the initial LR from `1e-4` to `3e-5`
 - Validation loss is averaged over sliding-window patches, while Dice is computed on the reconstructed full volume, so they are related but not identical objectives
 
+### 5.5 wandb logging checklist
+
+- Install `wandb` and run `wandb login` once
+- Run validation with `--wandb`
+- If run creation fails in restricted environments, set `WANDB_MODE=offline` and sync later
+
 ## 6. Dependencies
 
 ```bash
 pip install torch torchvision
-pip install scikit-learn scipy numpy matplotlib tifffile
+pip install scikit-learn scipy numpy matplotlib tifffile wandb
 ```

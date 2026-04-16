@@ -7,8 +7,8 @@ import tifffile as tiff
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import wandb
 import matplotlib.pyplot as plt
-from sklearn.metrics import precision_recall_curve, roc_curve, auc
 
 from detect import UNet
 
@@ -166,7 +166,12 @@ def sample_for_curves(gt_seg, prob_map, max_points=300000):
     return y_true, y_score
 
 
-def plot_pr_roc(y_true, y_score, model_path):
+def log_pr_roc_to_wandb(wandb_run, y_true, y_score):
+    """Log PR/ROC curves to wandb using native curve visualizations."""
+    if wandb_run is None:
+        print("Skip PR/ROC upload: wandb is disabled.")
+        return
+
     if y_true.size == 0:
         print("Skip PR/ROC plot: no sampled points.")
         return
@@ -175,35 +180,25 @@ def plot_pr_roc(y_true, y_score, model_path):
         print("Skip PR/ROC plot: ground truth has only one class.")
         return
 
-    precision, recall, _ = precision_recall_curve(y_true, y_score)
-    fpr, tpr, _ = roc_curve(y_true, y_score)
-    roc_auc = auc(fpr, tpr)
+    y_true = y_true.astype(np.int32)
+    y_score = np.clip(y_score.astype(np.float32), 0.0, 1.0)
+    y_proba = np.stack([1.0 - y_score, y_score], axis=1)
 
-    model_name = os.path.splitext(os.path.basename(model_path))[0]
-    out_path = f"validation_curves_{model_name}.png"
-
-    plt.figure(figsize=(12, 5))
-
-    plt.subplot(1, 2, 1)
-    plt.plot(recall, precision, linewidth=2)
-    plt.xlabel("Recall")
-    plt.ylabel("Precision")
-    plt.title("Precision-Recall Curve")
-    plt.grid(alpha=0.3)
-
-    plt.subplot(1, 2, 2)
-    plt.plot(fpr, tpr, linewidth=2, label=f"AUC={roc_auc:.4f}")
-    plt.plot([0, 1], [0, 1], "k--", alpha=0.5)
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title("ROC Curve")
-    plt.legend(loc="lower right")
-    plt.grid(alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=300)
-    plt.close()
-    print(f"Curves saved to: {out_path}")
+    wandb_run.log(
+        {
+            "validation/pr_curve": wandb.plot.pr_curve(
+                y_true,
+                y_proba,
+                labels=["background", "foreground"],
+            ),
+            "validation/roc_curve": wandb.plot.roc_curve(
+                y_true,
+                y_proba,
+                labels=["background", "foreground"],
+            ),
+        }
+    )
+    print("PR/ROC curves logged to wandb.")
 
 
 def save_validation_visualization(
@@ -254,6 +249,83 @@ def save_validation_visualization(
     plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"Visualization saved to: {out_path}")
+    return out_path
+
+
+def build_center_slice_log(volume, label, pred_seg, prob_map, sample_name):
+    """Build wandb images for the center slice of one 3D sample."""
+    z_mid = volume.shape[0] // 2
+
+    img_slice = volume[z_mid]
+    gt_slice = (label[z_mid] > 0).astype(np.uint8)
+    pred_slice = pred_seg[z_mid].astype(np.uint8)
+    prob_slice = prob_map[z_mid].astype(np.float32)
+
+    return {
+        "validation/original_slice": wandb.Image(
+            img_slice,
+            caption=f"{sample_name} | center slice original",
+        ),
+        "validation/ground_truth_slice": wandb.Image(
+            gt_slice,
+            caption=f"{sample_name} | center slice label",
+        ),
+        "validation/prediction_slice": wandb.Image(
+            pred_slice,
+            caption=f"{sample_name} | center slice prediction",
+        ),
+        "validation/probability_slice": wandb.Image(
+            prob_slice,
+            caption=f"{sample_name} | center slice probability",
+        ),
+    }
+
+
+def log_sample_to_wandb(wandb_run, sample_name, volume, label, pred_seg, prob_map, metrics, step):
+    """Log one validation sample with metrics and representative slice images."""
+    if wandb_run is None:
+        return
+
+    payload = {
+        "validation/sample_index": step,
+        "validation/sample_name": sample_name,
+        "validation/sample_dice": metrics["dice"],
+        "validation/sample_iou": metrics["iou"],
+        "validation/sample_f1": metrics["f1"],
+        "validation/sample_precision": metrics["precision"],
+        "validation/sample_recall": metrics["recall"],
+        "validation/sample_specificity": metrics["specificity"],
+    }
+    if metrics.get("loss") is not None:
+        payload["validation/sample_loss"] = metrics["loss"]
+
+    payload.update(build_center_slice_log(volume, label, pred_seg, prob_map, sample_name))
+    wandb_run.log(payload)
+
+
+def log_generated_files_to_wandb(wandb_run, visualization_path=None):
+    """Upload generated validation PNG files to wandb."""
+    if wandb_run is None:
+        return
+
+    payload = {}
+    if visualization_path and os.path.exists(visualization_path):
+        payload["validation/summary_visualization"] = wandb.Image(visualization_path)
+
+    if payload:
+        wandb_run.log(payload)
+
+
+def log_summary_table_to_wandb(wandb_run, summary):
+    """Upload summary metrics as a wandb table."""
+    if wandb_run is None or not summary:
+        return
+
+    table = wandb.Table(columns=["metric", "value"])
+    for key, value in summary.items():
+        table.add_data(key, float(value))
+
+    wandb_run.log({"validation/summary_table": table})
 
 
 def evaluate_model(
@@ -267,6 +339,7 @@ def evaluate_model(
     save_results=True,
     plot_curves=True,
     save_visualization=True,
+    wandb_run=None,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -294,12 +367,14 @@ def evaluate_model(
     curve_true = []
     curve_score = []
     visualization_saved = False
+    visualization_path = None
 
     print(f"Model: {model_path}")
     print(f"Validation samples: {len(pairs)}")
     print(f"Patch size: {patch_size}, stride: {stride}, threshold: {threshold}")
 
     for i, (img_path, label_path) in enumerate(pairs, start=1):
+        sample_name = os.path.basename(img_path)
         vol = tiff.imread(img_path).astype(np.float32)
         lab = tiff.imread(label_path).astype(np.float32)
 
@@ -352,7 +427,7 @@ def evaluate_model(
             curve_score.append(y_score)
 
         if save_visualization and not visualization_saved:
-            save_validation_visualization(
+            visualization_path = save_validation_visualization(
                 volume=vol,
                 label=lab,
                 pred_seg=pred_seg,
@@ -361,8 +436,28 @@ def evaluate_model(
             )
             visualization_saved = True
 
+        sample_metrics = {
+            "dice": float(dice),
+            "iou": float(iou),
+            "f1": float(f1),
+            "precision": float(precision),
+            "recall": float(recall),
+            "specificity": float(specificity),
+            "loss": float(sample_loss) if sample_loss is not None else None,
+        }
+        log_sample_to_wandb(
+            wandb_run,
+            sample_name,
+            vol,
+            lab,
+            pred_seg,
+            prob_map,
+            sample_metrics,
+            step=i,
+        )
+
         print(
-            f"[{i}/{len(pairs)}] {os.path.basename(img_path)} | "
+            f"[{i}/{len(pairs)}] {sample_name} | "
             f"Dice={dice:.4f}, IoU={iou:.4f}, F1={f1:.4f}, "
             f"P={precision:.4f}, R={recall:.4f}, Spec={specificity:.4f}"
             + (f", Loss={sample_loss:.4f}" if sample_loss is not None else "")
@@ -374,7 +469,7 @@ def evaluate_model(
     if plot_curves and curve_true:
         y_true_all = np.concatenate(curve_true)
         y_score_all = np.concatenate(curve_score)
-        plot_pr_roc(y_true_all, y_score_all, model_path)
+        log_pr_roc_to_wandb(wandb_run, y_true_all, y_score_all)
 
     summary = {
         "dice": float(np.mean(dice_list)),
@@ -386,6 +481,16 @@ def evaluate_model(
     }
     if loss_list:
         summary["loss"] = float(np.mean(loss_list))
+
+    log_generated_files_to_wandb(
+        wandb_run,
+        visualization_path=visualization_path,
+    )
+
+    if wandb_run is not None:
+        summary_payload = {f"validation/{key}": value for key, value in summary.items()}
+        wandb_run.log(summary_payload)
+        log_summary_table_to_wandb(wandb_run, summary)
 
     return summary
 
@@ -419,13 +524,13 @@ def parse_args():
         "--model",
         type=str,
         default="./models/unet_3d_best.pth",
-        help="Path to model .pth (e.g., ./models/Focal_Dice_100/unet_3d_best.pth)",
+        help="Path to model .pth (e.g., ./models/unet_3d_best.pth)",
     )
     parser.add_argument("--val-img-dir", type=str, default="data/validation/images")
     parser.add_argument("--val-label-dir", type=str, default="data/validation/labels")
     parser.add_argument("--patch-size", type=int, nargs=3, default=(16, 512, 512))
     parser.add_argument("--stride", type=int, nargs=3, default=(8, 256, 256))
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--threshold", type=float, default=0.1)
     parser.add_argument(
         "--loss-type",
         type=str,
@@ -448,7 +553,7 @@ def parse_args():
     parser.add_argument(
         "--plot-curves",
         action="store_true",
-        default=False,
+        default=True,
         help="Generate PR/ROC curves PNG.",
     )
     parser.add_argument(
@@ -463,6 +568,24 @@ def parse_args():
         dest="visualize",
         help="Do not save visualization PNG.",
     )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        default=False,
+        help="Log validation metrics and slice images to wandb.",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="c_elegans_3d_unet_validation",
+        help="wandb project name used when --wandb is enabled.",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default=None,
+        help="Optional wandb run name for this validation job.",
+    )
     return parser.parse_args()
 
 
@@ -470,30 +593,60 @@ def main():
     args = parse_args()
     loss_type = None if args.loss_type == "none" else args.loss_type
 
-    summary = evaluate_model(
-        model_path=args.model,
-        val_img_dir=args.val_img_dir,
-        val_label_dir=args.val_label_dir,
-        patch_size=tuple(args.patch_size),
-        stride=tuple(args.stride),
-        threshold=args.threshold,
-        loss_type=loss_type,
-        save_results=args.save_results,
-        plot_curves=args.plot_curves,
-        save_visualization=args.visualize,
-    )
+    wandb_run = None
+    if args.wandb:
+        run_name = args.wandb_run_name
+        if run_name is None:
+            model_name = os.path.splitext(os.path.basename(args.model))[0]
+            run_name = f"validate_{model_name}"
 
-    print("\n=== Mean Metrics ===")
-    print(f"Dice: {summary['dice']:.4f}")
-    print(f"IoU: {summary['iou']:.4f}")
-    print(f"F1: {summary['f1']:.4f}")
-    print(f"Precision: {summary['precision']:.4f}")
-    print(f"Recall: {summary['recall']:.4f}")
-    print(f"Specificity: {summary['specificity']:.4f}")
-    if "loss" in summary:
-        print(f"Validation Loss: {summary['loss']:.4f}")
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config={
+                "model_path": args.model,
+                "val_img_dir": args.val_img_dir,
+                "val_label_dir": args.val_label_dir,
+                "patch_size": tuple(args.patch_size),
+                "stride": tuple(args.stride),
+                "threshold": args.threshold,
+                "loss_type": loss_type,
+                "save_results": args.save_results,
+                "plot_curves": args.plot_curves,
+                "save_visualization": args.visualize,
+            },
+            job_type="validation",
+        )
 
-    save_report(args.model, summary)
+    try:
+        summary = evaluate_model(
+            model_path=args.model,
+            val_img_dir=args.val_img_dir,
+            val_label_dir=args.val_label_dir,
+            patch_size=tuple(args.patch_size),
+            stride=tuple(args.stride),
+            threshold=args.threshold,
+            loss_type=loss_type,
+            save_results=args.save_results,
+            plot_curves=args.plot_curves,
+            save_visualization=args.visualize,
+            wandb_run=wandb_run,
+        )
+
+        print("\n=== Mean Metrics ===")
+        print(f"Dice: {summary['dice']:.4f}")
+        print(f"IoU: {summary['iou']:.4f}")
+        print(f"F1: {summary['f1']:.4f}")
+        print(f"Precision: {summary['precision']:.4f}")
+        print(f"Recall: {summary['recall']:.4f}")
+        print(f"Specificity: {summary['specificity']:.4f}")
+        if "loss" in summary:
+            print(f"Validation Loss: {summary['loss']:.4f}")
+
+        save_report(args.model, summary)
+    finally:
+        if wandb_run is not None:
+            wandb.finish()
 
 
 if __name__ == "__main__":
