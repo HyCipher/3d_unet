@@ -10,17 +10,17 @@ from torch.utils.data import Dataset, DataLoader
 
 from config import get_control_panel
 from detect import UNet  # 3D UNet
-from augmentations.data_augmentation import apply_augmentation  # pyright: ignore[reportMissingImports]
-from losses.loss_functions import build_criterion  # pyright: ignore[reportMissingImports]
-from validations.validation_utils import (  # pyright: ignore[reportMissingImports]
+from augmentations import apply_augmentation  
+from losses import build_criterion  
+from validations.validation_utils import ( 
     save_validation_history,
 )
-from validations.evaluators import (  # pyright: ignore[reportMissingImports]
+from validations.evaluators import (  
     evaluate_with_optional_limit,
     maybe_evaluate_train_set,
 )
-from validations.reporting import print_metrics  # pyright: ignore[reportMissingImports]
-from tracking.wandb_logger import (  # pyright: ignore[reportMissingImports]
+from validations.reporting import print_metrics  
+from tracking.wandb_logger import (
     build_wandb_config,
     finish_wandb_run,
     init_wandb_run,
