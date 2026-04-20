@@ -1,25 +1,19 @@
 import os
 import glob
-import json
-from datetime import datetime
-
-import tifffile as tiff
 import numpy as np
 import torch
+import tifffile as tiff
 from torch.utils.data import Dataset, DataLoader
 
 from config import get_control_panel
-from detect import UNet  # 3D UNet
+from nets.detect import UNet  
 from augmentations import apply_augmentation  
 from losses import build_criterion  
-from validations.validation_utils import ( 
-    save_validation_history,
-)
-from validations.evaluators import (  
+from validate.evaluators import (  
     evaluate_with_optional_limit,
     maybe_evaluate_train_set,
 )
-from validations.reporting import print_metrics  
+from validate.reporting import print_metrics  
 from tracking.wandb_logger import (
     build_wandb_config,
     finish_wandb_run,
@@ -118,12 +112,6 @@ class Tif3DPatchDataset(Dataset):
 # =========================
 # Training
 # =========================
-def save_training_loss_history(history, history_path="training_loss.json"):
-    """Persist per-epoch training loss for plotting and comparison."""
-    with open(history_path, "w") as f:
-        json.dump(history, f, indent=2)
-
-
 def init_model_and_lr(device, pretrained_path="./models/unet_3d_best.pth"):
     """Create model and optionally load a pretrained checkpoint."""
     model = UNet().to(device)
@@ -147,29 +135,6 @@ def create_optimizer_and_scheduler(model, lr):
         min_lr=1e-6,
     )
     return optimizer, scheduler
-
-
-def resolve_history_paths():
-    """Avoid overwriting history files across different runs."""
-    validation_history_path = "validation_history.json"
-    if os.path.exists(validation_history_path):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        validation_history_path = f"validation_history_{timestamp}.json"
-        print(
-            "Detected existing validation_history.json; "
-            f"saving current run to {validation_history_path}"
-        )
-
-    training_loss_path = "training_loss.json"
-    if os.path.exists(training_loss_path):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        training_loss_path = f"training_loss_{timestamp}.json"
-        print(
-            "Detected existing training_loss.json; "
-            f"saving current run to {training_loss_path}"
-        )
-
-    return validation_history_path, training_loss_path
 
 
 def run_sanity_check(model, dataset, device):
@@ -253,7 +218,7 @@ def train():
     val_dataset = Tif3DPatchDataset(
         img_dir="data/validation/images",
         label_dir="data/validation/labels",
-        patch_size=(16, 512, 512),
+        patch_size=(8, 512, 512),
         patches_per_volume=50,
         augment=False,
     )
@@ -261,7 +226,7 @@ def train():
     train_eval_dataset = Tif3DPatchDataset(
         img_dir="data/training/images",
         label_dir="data/training/labels",
-        patch_size=(16, 512, 512),
+        patch_size=(8, 512, 512),
         patches_per_volume=50,
         augment=False,
     )
@@ -276,10 +241,7 @@ def train():
     optimizer, scheduler = create_optimizer_and_scheduler(model, lr)
 
     best_val_dice = 0.0
-    val_history = []
-    training_loss_history = []
 
-    validation_history_path, training_loss_path = resolve_history_paths()
     wandb_config = build_wandb_config(loader, lr, controls)
 
     init_wandb_run(project="c_elegans_3d_unet", config=wandb_config)
@@ -292,13 +254,10 @@ def train():
                 f"Loss: {avg_epoch_loss:.4f}  LR: {current_lr:.2e}"
             )
 
-            training_loss_history.append({
-                "epoch": epoch + 1,
-                "train_loss": avg_epoch_loss,
-            })
-            save_training_loss_history(training_loss_history, training_loss_path)
             log_train_loss(epoch=epoch + 1, train_loss=avg_epoch_loss)
-            run_sanity_check(model, dataset, device)
+            
+            if (epoch + 1) % 10 == 0:
+                run_sanity_check(model, dataset, device)
 
             if (epoch + 1) % controls["validate_every"] == 0 or (epoch == 0 and not loaded_pretrained):
                 train_metrics = maybe_evaluate_train_set(
@@ -317,16 +276,6 @@ def train():
                     criterion,
                 )
 
-                history_item = {
-                    "epoch": epoch + 1,
-                    "train": train_metrics,
-                    "validation": val_metrics,
-                    "train_loss": avg_epoch_loss,
-                    "val_loss": val_metrics.get("loss"),
-                }
-                val_history.append(history_item)
-                save_validation_history(val_history, validation_history_path)
-
                 print_metrics(train_metrics, val_metrics)
                 log_validation_to_wandb(train_metrics, val_metrics, epoch + 1)
 
@@ -336,27 +285,12 @@ def train():
                 save_epoch_model(model, epoch + 1)
                 best_val_dice = maybe_save_best_model(model, val_metrics, best_val_dice)
 
-        if val_history:
-            save_validation_history(val_history, validation_history_path)
-            print(f"Validation history saved to: {validation_history_path}")
-
-        if training_loss_history:
-            save_training_loss_history(training_loss_history, training_loss_path)
-            print(f"Training loss history saved to: {training_loss_path}")
         finish_wandb_run()
 
     except KeyboardInterrupt:
         print("Training interrupted by user.")
         torch.save(model.state_dict(), "./models/unet_3d_interrupted.pth")
         print("Model saved as: unet_3d_interrupted.pth")
-
-        if val_history:
-            save_validation_history(val_history, validation_history_path)
-            print(f"Validation history saved to: {validation_history_path}")
-
-        if training_loss_history:
-            save_training_loss_history(training_loss_history, training_loss_path)
-            print(f"Training loss history saved to: {training_loss_path}")
         finish_wandb_run()
 
 

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import wandb
 import matplotlib.pyplot as plt
 
-from detect import UNet
+from nets.detect import UNet
 
 
 def dice_coefficient(pred, gt, smooth=1e-6):
@@ -528,7 +528,7 @@ def parse_args():
     )
     parser.add_argument("--val-img-dir", type=str, default="data/validation/images")
     parser.add_argument("--val-label-dir", type=str, default="data/validation/labels")
-    parser.add_argument("--patch-size", type=int, nargs=3, default=(16, 512, 512))
+    parser.add_argument("--patch-size", type=int, nargs=3, default=(8, 512, 512))
     parser.add_argument("--stride", type=int, nargs=3, default=(8, 256, 256))
     parser.add_argument("--threshold", type=float, default=0.1)
     parser.add_argument(

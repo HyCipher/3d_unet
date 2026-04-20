@@ -2,9 +2,7 @@ import numpy as np
 
 
 def random_flip_3d(img, label, prob=0.5):
-    """随机翻转（沿各个轴）。"""
-    print("🔄 Applying random_flip_3d augmentation...")
-    
+    """随机翻转。"""
     # Flip along the Z-axis
     if np.random.rand() < prob:
         img = np.flip(img, axis=0).copy()

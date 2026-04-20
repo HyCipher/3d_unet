@@ -4,20 +4,13 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-from detect import UNet   # 你的 3D UNet
+from nets.detect import UNet   # 你的 3D UNet
 
 from scipy.ndimage import label, center_of_mass
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 
-import tifffile as tiff
-import numpy as np
-
 from sklearn.metrics import precision_recall_curve, average_precision_score
-import matplotlib.pyplot as plt
-
-from scipy.ndimage import label, center_of_mass
-from scipy.spatial.distance import cdist
 # =========================
 # Sliding window inference
 # =========================
