@@ -1,9 +1,9 @@
 === Validation Summary ===
-Model: ./models/unet_3d_best.pth
-Dice: 0.447674
-IoU: 0.288389
-F1: 0.447674
-Precision: 0.385550
-Recall: 0.533665
-Specificity: 0.999337
-Validation Loss (mean): 0.747966
+Model: ./models/run_20260420_150612/unet_3d_best.pth
+Dice: 0.286360
+IoU: 0.167106
+F1: 0.286360
+Precision: 0.187194
+Recall: 0.608951
+Specificity: 0.997938
+Validation Loss (mean): 0.004356

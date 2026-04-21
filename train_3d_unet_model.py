@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import tifffile as tiff
 from torch.utils.data import Dataset, DataLoader
-
+from datetime import datetime
 from config import get_control_panel
 from nets.detect import UNet  
 from augmentations import apply_augmentation  
@@ -14,7 +14,7 @@ from validate.evaluators import (
     maybe_evaluate_train_set,
 )
 from validate.reporting import print_metrics  
-from tracking.wandb_logger import (
+from tracking import (
     build_wandb_config,
     finish_wandb_run,
     init_wandb_run,
@@ -186,6 +186,7 @@ def maybe_save_best_model(model, val_metrics, best_val_dice):
     if val_metrics["dice"] > best_val_dice:
         best_val_dice = val_metrics["dice"]
         torch.save(model.state_dict(), "./models/unet_3d_best.pth")
+        torch.save(model.state_dict(), f"./models/3d_unet_best_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
         print(f"Best model saved! (Dice: {best_val_dice:.4f})")
     return best_val_dice
 
