@@ -77,7 +77,7 @@ def validate_with_full_metrics(
             vol = dataset.volumes[idx]
             lab = dataset.labels[idx]
 
-            print(f"  validating volume {idx+1}/{total_volumes} ...")
+            # print(f"  validating volume {idx+1}/{total_volumes} ...")
 
             if criterion is not None:
                 pd_s, ph_s, pw_s = patch_size

@@ -1,4 +1,3 @@
-import argparse
 import glob
 import os
 
@@ -11,13 +10,18 @@ import matplotlib.pyplot as plt
 
 from nets.detect import UNet
 from losses import FocalLoss, DiceFocalLoss
+from val_config import get_validation_config
 from validate.metrics import dice_coefficient, iou_score, precision_recall_f1_specificity
 from tracking import (
     log_pr_roc_to_wandb,
     log_sample_to_wandb,
+    log_sample_table_to_wandb,
     log_generated_files_to_wandb,
     log_summary_table_to_wandb,
 )
+
+
+VAL_CONFIG = get_validation_config()
 
 
 def _gen_starts(length, patch, stride):
@@ -154,7 +158,7 @@ def save_validation_visualization(
 
     axes[1, 1].imshow(img_slice, cmap="gray")
     axes[1, 1].imshow(gt_slice, cmap="Reds", alpha=0.4)
-    axes[1, 1].set_title("Label Overlay")
+    axes[1, 1].set_title("Ground Truth Overlay")
     axes[1, 1].axis("off")
 
     axes[1, 2].imshow(img_slice, cmap="gray")
@@ -173,21 +177,22 @@ def evaluate_model(
     model_path,
     val_img_dir,
     val_label_dir,
-    patch_size=(16, 512, 512),
-    stride=(8, 256, 256),
-    threshold=0.5,
-    loss_type="bce",
-    save_results=True,
-    plot_curves=True,
-    save_visualization=True,
+    patch_size=VAL_CONFIG["patch_size"],
+    stride=VAL_CONFIG["stride"],
+    threshold=VAL_CONFIG["threshold"],
+    loss_type=VAL_CONFIG["loss_type"],
+    save_results=VAL_CONFIG["save_results"],
+    plot_curves=VAL_CONFIG["plot_curves"],
+    save_visualization=VAL_CONFIG["visualize"],
     wandb_run=None,
 ):
+    # Set device and load model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     model = UNet().to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
+    # Optionally build criterion if loss logging is enabled
     criterion = None
     if loss_type == "bce":
         criterion = nn.BCEWithLogitsLoss()
@@ -196,8 +201,10 @@ def evaluate_model(
     elif loss_type == "dicefocal":
         criterion = DiceFocalLoss(alpha=0.25, gamma=2.0, dice_weight=0.8, focal_weight=1.5)
 
+    # Load validation pairs
     pairs = load_validation_pairs(val_img_dir, val_label_dir)
 
+    # Initialize lists to collect metrics and curve data across samples
     dice_list = []
     iou_list = []
     f1_list = []
@@ -205,15 +212,13 @@ def evaluate_model(
     recall_list = []
     specificity_list = []
     loss_list = []
+    sample_rows = []
     curve_true = []
     curve_score = []
     visualization_saved = False
     visualization_path = None
 
-    print(f"Model: {model_path}")
-    print(f"Validation samples: {len(pairs)}")
-    print(f"Patch size: {patch_size}, stride: {stride}, threshold: {threshold}")
-
+    # Iterate through validation samples
     for i, (img_path, label_path) in enumerate(pairs, start=1):
         sample_name = os.path.basename(img_path)
         vol = tiff.imread(img_path).astype(np.float32)
@@ -278,6 +283,19 @@ def evaluate_model(
             "specificity": float(specificity),
             "loss": float(sample_loss) if sample_loss is not None else None,
         }
+        sample_rows.append(
+            {
+                "sample_index": i,
+                "sample_name": sample_name,
+                "dice": sample_metrics["dice"],
+                "iou": sample_metrics["iou"],
+                "f1": sample_metrics["f1"],
+                "precision": sample_metrics["precision"],
+                "recall": sample_metrics["recall"],
+                "specificity": sample_metrics["specificity"],
+                "loss": sample_metrics["loss"],
+            }
+        )
         log_sample_to_wandb(
             wandb_run,
             sample_name,
@@ -289,21 +307,16 @@ def evaluate_model(
             step=i,
         )
 
-        print(
-            f"[{i}/{len(pairs)}] {sample_name} | "
-            f"Dice={dice:.4f}, IoU={iou:.4f}, F1={f1:.4f}, "
-            f"P={precision:.4f}, R={recall:.4f}, Spec={specificity:.4f}"
-            + (f", Loss={sample_loss:.4f}" if sample_loss is not None else "")
-        )
-
         # Keep optional reference to probability map to ensure no linter warning for unused var in some setups.
         _ = prob_map
 
+    # Plot and log PR/ROC curves if we have collected any samples for them
     if plot_curves and curve_true:
         y_true_all = np.concatenate(curve_true)
         y_score_all = np.concatenate(curve_score)
         log_pr_roc_to_wandb(wandb_run, y_true_all, y_score_all)
 
+    # mean metrics summary and logging
     summary = {
         "dice": float(np.mean(dice_list)),
         "iou": float(np.mean(iou_list)),
@@ -321,148 +334,65 @@ def evaluate_model(
     )
 
     if wandb_run is not None:
-        summary_payload = {f"validation/{key}": value for key, value in summary.items()}
-        wandb_run.log(summary_payload)
+        # summary_payload = {f"validation/{key}": value for key, value in summary.items()}
+        # wandb_run.log(summary_payload)
+        log_sample_table_to_wandb(wandb_run, sample_rows)
         log_summary_table_to_wandb(wandb_run, summary)
 
     return summary
 
 
-def save_report(model_path, summary):
-    model_name = os.path.splitext(os.path.basename(model_path))[0]
-    report_path = f"validation_report_{model_name}.txt"
-
-    lines = [
-        "=== Validation Summary ===",
-        f"Model: {model_path}",
-        f"Dice: {summary['dice']:.6f}",
-        f"IoU: {summary['iou']:.6f}",
-        f"F1: {summary['f1']:.6f}",
-        f"Precision: {summary['precision']:.6f}",
-        f"Recall: {summary['recall']:.6f}",
-        f"Specificity: {summary['specificity']:.6f}",
-    ]
-    if "loss" in summary:
-        lines.append(f"Validation Loss (mean): {summary['loss']:.6f}")
-
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-
-    print(f"Report saved to: {report_path}")
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate one 3D UNet model on validation dataset")
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="./models/run_20260420_150612/unet_3d_best.pth",
-        help="Path to model",
-    )
-    parser.add_argument("--val-img-dir", type=str, default="data/validation/images")
-    parser.add_argument("--val-label-dir", type=str, default="data/validation/labels")
-    parser.add_argument("--patch-size", type=int, nargs=3, default=(8, 512, 512))
-    parser.add_argument("--stride", type=int, nargs=3, default=(8, 256, 256))
-    parser.add_argument("--threshold", type=float, default=0.1)
-    parser.add_argument(
-        "--loss-type",
-        type=str,
-        choices=["bce", "focal", "dicefocal"],
-        default="bce",
-        help="Loss used only for validation-loss reporting.",
-    )
-    parser.add_argument(
-        "--save-results",
-        action="store_true",
-        default=True,
-        help="Save pred/prob tif files to validation_results/",
-    )
-    parser.add_argument(
-        "--no-save-results",
-        action="store_false",
-        dest="save_results",
-        help="Do not save pred/prob tif files.",
-    )
-    parser.add_argument(
-        "--plot-curves",
-        action="store_true",
-        default=True,
-        help="Generate PR/ROC curves PNG.",
-    )
-    parser.add_argument(
-        "--visualize",
-        action="store_true",
-        default=True,
-        help="Save 6-panel visualization PNG.",
-    )
-    parser.add_argument(
-        "--no-visualize",
-        action="store_false",
-        dest="visualize",
-        help="Do not save visualization PNG.",
-    )
-    parser.add_argument(
-        "--wandb",
-        action="store_true",
-        default=True,
-        help="Log validation metrics and slice images to wandb.",
-    )
-    parser.add_argument(
-        "--wandb-project",
-        type=str,
-        default="c_elegans_3d_unet_validation",
-        help="wandb project name used when --wandb is enabled.",
-    )
-    parser.add_argument(
-        "--wandb-run-name",
-        type=str,
-        default=None,
-        help="Optional wandb run name for this validation job.",
-    )
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
-    loss_type = None if args.loss_type == "none" else args.loss_type
+    config = VAL_CONFIG
+    loss_type = config["loss_type"]
+    model_path = config["model_path"]
+    val_img_dir = config["val_img_dir"]
+    val_label_dir = config["val_label_dir"]
+    patch_size = tuple(config["patch_size"])
+    stride = tuple(config["stride"])
+    threshold = config["threshold"]
+    save_results = config["save_results"]
+    plot_curves = config["plot_curves"]
+    save_visualization = config["visualize"]
+    
+    # wandb config
+    use_wandb = config["wandb"]
+    wandb_project = config["wandb_project"]
+    wandb_run_name = config["wandb_run_name"]
 
     wandb_run = None
-    if args.wandb:
-        run_name = args.wandb_run_name
-        if run_name is None:
-            model_name = os.path.splitext(os.path.basename(args.model))[0]
-            run_name = f"validate_{model_name}"
-
+    if use_wandb:
+        run_name = wandb_run_name
         wandb_run = wandb.init(
-            project=args.wandb_project,
+            project=wandb_project,
             name=run_name,
             config={
-                "model_path": args.model,
-                "val_img_dir": args.val_img_dir,
-                "val_label_dir": args.val_label_dir,
-                "patch_size": tuple(args.patch_size),
-                "stride": tuple(args.stride),
-                "threshold": args.threshold,
+                # "model_path": model_path,
+                "val_img_dir": val_img_dir,
+                "val_label_dir": val_label_dir,
+                "patch_size": patch_size,
+                "stride": stride,
+                "threshold": threshold,
                 "loss_type": loss_type,
-                "save_results": args.save_results,
-                "plot_curves": args.plot_curves,
-                "save_visualization": args.visualize,
+                "save_results": save_results,
+                "plot_curves": plot_curves,
+                "save_visualization": save_visualization,
             },
             job_type="validation",
         )
 
     try:
         summary = evaluate_model(
-            model_path=args.model,
-            val_img_dir=args.val_img_dir,
-            val_label_dir=args.val_label_dir,
-            patch_size=tuple(args.patch_size),
-            stride=tuple(args.stride),
-            threshold=args.threshold,
+            model_path=model_path,
+            val_img_dir=val_img_dir,
+            val_label_dir=val_label_dir,
+            patch_size=patch_size,
+            stride=stride,
+            threshold=threshold,
             loss_type=loss_type,
-            save_results=args.save_results,
-            plot_curves=args.plot_curves,
-            save_visualization=args.visualize,
+            save_results=save_results,
+            plot_curves=plot_curves,
+            save_visualization=save_visualization,
             wandb_run=wandb_run,
         )
 
@@ -476,20 +406,10 @@ def main():
         if "loss" in summary:
             print(f"Validation Loss: {summary['loss']:.4f}")
 
-        save_report(args.model, summary)
     finally:
         if wandb_run is not None:
             wandb.finish()
 
 
 if __name__ == "__main__":
-    # Default values (same meaning as VALIDATION_GUIDE.md):
-    # model_path = "./models/unet_3d_best.pth"
-    # img_dir = "data/validation/images"
-    # label_dir = "data/validation/labels"
-    # patch_size = (16, 512, 512)
-    # stride = (8, 256, 256)
-    # threshold = 0.5
-    # save_results = True
-    # plot_curves = False
     main()

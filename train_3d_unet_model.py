@@ -18,7 +18,7 @@ from tracking import (
     build_wandb_config,
     finish_wandb_run,
     init_wandb_run,
-    log_train_loss,
+    log_training_loss,
     log_validation_to_wandb,
 )
 
@@ -186,7 +186,7 @@ def maybe_save_best_model(model, val_metrics, best_val_dice):
     if val_metrics["dice"] > best_val_dice:
         best_val_dice = val_metrics["dice"]
         torch.save(model.state_dict(), "./models/unet_3d_best.pth")
-        torch.save(model.state_dict(), f"./models/3d_unet_best_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
+        # torch.save(model.state_dict(), f"./models/3d_unet_best_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
         print(f"Best model saved! (Dice: {best_val_dice:.4f})")
     return best_val_dice
 
@@ -204,8 +204,6 @@ def train():
 
     x, y = dataset[0]
     print("x shape:", x.shape)
-    print("label mean:", y.mean().item())
-    print("label max:", y.max().item())
 
     loader = DataLoader(
         dataset,
@@ -239,13 +237,16 @@ def train():
         controls["dice_weight"],
         controls["focal_weight"],
     )
+
     optimizer, scheduler = create_optimizer_and_scheduler(model, lr)
 
+    # Track best validation dice to save best model checkpoint
     best_val_dice = 0.0
 
+    # Initialize wandb run before training loop
     wandb_config = build_wandb_config(loader, lr, controls)
-
     init_wandb_run(project="c_elegans_3d_unet", config=wandb_config)
+    
     try:
         for epoch in range(controls["num_epochs"]):
             avg_epoch_loss = train_one_epoch(model, loader, criterion, optimizer, device)
@@ -255,10 +256,11 @@ def train():
                 f"Loss: {avg_epoch_loss:.4f}  LR: {current_lr:.2e}"
             )
 
-            log_train_loss(epoch=epoch + 1, train_loss=avg_epoch_loss)
+            log_training_loss(epoch=epoch + 1, train_loss=avg_epoch_loss)
             
-            if (epoch + 1) % 10 == 0:
-                run_sanity_check(model, dataset, device)
+            # Optional sanity check every 10 epochs (can be commented out in final version)
+            # if (epoch + 1) % 10 == 0:
+            #     run_sanity_check(model, dataset, device)
 
             if (epoch + 1) % controls["validate_every"] == 0 or (epoch == 0 and not loaded_pretrained):
                 train_metrics = maybe_evaluate_train_set(

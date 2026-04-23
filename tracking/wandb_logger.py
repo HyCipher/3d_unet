@@ -34,7 +34,7 @@ def init_wandb_run(project, config):
     )
 
 
-def log_train_loss(epoch, train_loss):
+def log_training_loss(epoch, train_loss):
     """Log train loss for one epoch."""
     wandb.log({"train_loss": train_loss, "epoch": epoch})
 
@@ -57,7 +57,6 @@ def log_validation_to_wandb(train_metrics, val_metrics, epoch):
         "val_recall": val_metrics["recall"],
         "val_specificity": val_metrics["specificity"],
     }
-
     if "loss" in val_metrics:
         payload["val_loss"] = val_metrics["loss"]
     wandb.log(payload)
@@ -81,7 +80,7 @@ def log_pr_roc_to_wandb(wandb_run, y_true, y_score):
     if np.unique(y_true).size < 2:
         print("Skip PR/ROC plot: ground truth has only one class.")
         return
-
+    
     y_true = y_true.astype(np.int32)
     y_score = np.clip(y_score.astype(np.float32), 0.0, 1.0)
     y_proba = np.stack([1.0 - y_score, y_score], axis=1)
@@ -133,25 +132,50 @@ def build_center_slice_log(volume, label, pred_seg, prob_map, sample_name):
 
 
 def log_sample_to_wandb(wandb_run, sample_name, volume, label, pred_seg, prob_map, metrics, step):
-    """Log one validation sample with metrics and representative slice images."""
+    """Log representative slice images for one validation sample."""
     if wandb_run is None:
         return
 
     payload = {
-        "validation/sample_index": step,
-        "validation/sample_name": sample_name,
-        "validation/sample_dice": metrics["dice"],
-        "validation/sample_iou": metrics["iou"],
-        "validation/sample_f1": metrics["f1"],
-        "validation/sample_precision": metrics["precision"],
-        "validation/sample_recall": metrics["recall"],
-        "validation/sample_specificity": metrics["specificity"],
+        "validation/sample_step": step,
+        "validation/sample_id": sample_name,
     }
-    if metrics.get("loss") is not None:
-        payload["validation/sample_loss"] = metrics["loss"]
 
     payload.update(build_center_slice_log(volume, label, pred_seg, prob_map, sample_name))
     wandb_run.log(payload)
+
+
+def log_sample_table_to_wandb(wandb_run, sample_rows):
+    """Upload per-sample metrics as a dedicated wandb table."""
+    if wandb_run is None or not sample_rows:
+        return
+
+    columns = [
+        "sample_index",
+        "sample_name",
+        "dice",
+        "iou",
+        "f1",
+        "precision",
+        "recall",
+        "specificity",
+        "loss",
+    ]
+    table = wandb.Table(columns=columns)
+    for row in sample_rows:
+        table.add_data(
+            row.get("sample_index"),
+            row.get("sample_name"),
+            row.get("dice"),
+            row.get("iou"),
+            row.get("f1"),
+            row.get("precision"),
+            row.get("recall"),
+            row.get("specificity"),
+            row.get("loss"),
+        )
+
+    wandb_run.log({"validation/sample_table": table})
 
 
 def log_generated_files_to_wandb(wandb_run, visualization_path=None):
