@@ -1,5 +1,5 @@
 from datetime import datetime
-
+import os
 import numpy as np
 import wandb
 
@@ -87,12 +87,12 @@ def log_pr_roc_to_wandb(wandb_run, y_true, y_score):
 
     wandb_run.log(
         {
-            "validation/pr_curve": wandb.plot.pr_curve(
+            "val/pr_curve": wandb.plot.pr_curve(
                 y_true,
                 y_proba,
                 labels=["background", "foreground"],
             ),
-            "validation/roc_curve": wandb.plot.roc_curve(
+            "val/roc_curve": wandb.plot.roc_curve(
                 y_true,
                 y_proba,
                 labels=["background", "foreground"],
@@ -102,51 +102,21 @@ def log_pr_roc_to_wandb(wandb_run, y_true, y_score):
     print("PR/ROC curves logged to wandb.")
 
 
-def build_center_slice_log(volume, label, pred_seg, prob_map, sample_name):
-    """Build wandb images for the center slice of one 3D sample."""
-    z_mid = volume.shape[0] // 2
-
-    img_slice = volume[z_mid]
-    gt_slice = (label[z_mid] > 0).astype(np.uint8)
-    pred_slice = pred_seg[z_mid].astype(np.uint8)
-    prob_slice = prob_map[z_mid].astype(np.float32)
-
-    return {
-        "validation/original_slice": wandb.Image(
-            img_slice,
-            caption=f"{sample_name} | center slice original",
-        ),
-        "validation/ground_truth_slice": wandb.Image(
-            gt_slice,
-            caption=f"{sample_name} | center slice label",
-        ),
-        "validation/prediction_slice": wandb.Image(
-            pred_slice,
-            caption=f"{sample_name} | center slice prediction",
-        ),
-        "validation/probability_slice": wandb.Image(
-            prob_slice,
-            caption=f"{sample_name} | center slice probability",
-        ),
-    }
-
-
-def log_sample_to_wandb(wandb_run, sample_name, volume, label, pred_seg, prob_map, metrics, step):
-    """Log representative slice images for one validation sample."""
+def log_generated_files_to_wandb(wandb_run, visualization_path=None):
+    """Upload generated validation PNG files to wandb."""
     if wandb_run is None:
         return
 
-    payload = {
-        "validation/sample_step": step,
-        "validation/sample_id": sample_name,
-    }
+    payload = {}
+    if visualization_path and os.path.exists(visualization_path):
+        payload["val/summary_visualization"] = wandb.Image(visualization_path)
 
-    payload.update(build_center_slice_log(volume, label, pred_seg, prob_map, sample_name))
-    wandb_run.log(payload)
-
+    if payload:
+        wandb_run.log(payload)
 
 def log_sample_table_to_wandb(wandb_run, sample_rows):
     """Upload per-sample metrics as a dedicated wandb table."""
+    print(f"log_sample_table_to_wandb called with {len(sample_rows)} rows") 
     if wandb_run is None or not sample_rows:
         return
 
@@ -160,6 +130,7 @@ def log_sample_table_to_wandb(wandb_run, sample_rows):
         "recall",
         "specificity",
         "loss",
+        "sample_image",
     ]
     table = wandb.Table(columns=columns)
     for row in sample_rows:
@@ -173,26 +144,12 @@ def log_sample_table_to_wandb(wandb_run, sample_rows):
             row.get("recall"),
             row.get("specificity"),
             row.get("loss"),
+            row.get("sample_image"),
         )
 
-    wandb_run.log({"validation/sample_table": table})
-
-
-def log_generated_files_to_wandb(wandb_run, visualization_path=None):
-    """Upload generated validation PNG files to wandb."""
-    import os
-
-    if wandb_run is None:
-        return
-
-    payload = {}
-    if visualization_path and os.path.exists(visualization_path):
-        payload["validation/summary_visualization"] = wandb.Image(visualization_path)
-
-    if payload:
-        wandb_run.log(payload)
-
-
+    wandb_run.log({"val/sample_table": table})
+    
+    
 def log_summary_table_to_wandb(wandb_run, summary):
     """Upload summary metrics as a wandb table."""
     if wandb_run is None or not summary:
@@ -202,4 +159,4 @@ def log_summary_table_to_wandb(wandb_run, summary):
     for key, value in summary.items():
         table.add_data(key, float(value))
 
-    wandb_run.log({"validation/summary_table": table})
+    wandb_run.log({"val/summary_table": table})

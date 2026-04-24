@@ -14,9 +14,7 @@ from val_config import get_validation_config
 from validate.metrics import dice_coefficient, iou_score, precision_recall_f1_specificity
 from tracking import (
     log_pr_roc_to_wandb,
-    log_sample_to_wandb,
     log_sample_table_to_wandb,
-    log_generated_files_to_wandb,
     log_summary_table_to_wandb,
 )
 
@@ -121,13 +119,12 @@ def sample_for_curves(gt_seg, prob_map, max_points=300000):
 
     return y_true, y_score
 
-
+# The following functions are adapted from the training script's wandb logging utilities, but modified for validation context and to avoid logging training-specific metrics.
 def save_validation_visualization(
     volume,
     label,
     pred_seg,
     prob_map,
-    out_path="validation_visualization.png",
 ):
     # Use center slice for a quick visual sanity check.
     z_mid = volume.shape[0] // 2
@@ -167,10 +164,7 @@ def save_validation_visualization(
     axes[1, 2].axis("off")
 
     plt.tight_layout()
-    plt.savefig(out_path, dpi=300)
-    plt.close()
-    print(f"Visualization saved to: {out_path}")
-    return out_path
+    return fig
 
 
 def evaluate_model(
@@ -182,8 +176,6 @@ def evaluate_model(
     threshold=VAL_CONFIG["threshold"],
     loss_type=VAL_CONFIG["loss_type"],
     save_results=VAL_CONFIG["save_results"],
-    plot_curves=VAL_CONFIG["plot_curves"],
-    save_visualization=VAL_CONFIG["visualize"],
     wandb_run=None,
 ):
     # Set device and load model
@@ -215,8 +207,7 @@ def evaluate_model(
     sample_rows = []
     curve_true = []
     curve_score = []
-    visualization_saved = False
-    visualization_path = None
+    first_sample_image = None
 
     # Iterate through validation samples
     for i, (img_path, label_path) in enumerate(pairs, start=1):
@@ -259,20 +250,25 @@ def evaluate_model(
         if save_results:
             save_prediction_results(prob_map, pred_seg, img_path, out_dir="validation_results")
 
-        if plot_curves:
-            y_true, y_score = sample_for_curves(gt_seg, prob_map)
-            curve_true.append(y_true)
-            curve_score.append(y_score)
 
-        if save_visualization and not visualization_saved:
-            visualization_path = save_validation_visualization(
-                volume=vol,
-                label=lab,
-                pred_seg=pred_seg,
-                prob_map=prob_map,
-                out_path="validation_visualization.png",
-            )
-            visualization_saved = True
+        # plot and log PR/ROC curve data for this sample
+        y_true, y_score = sample_for_curves(gt_seg, prob_map)
+        curve_true.append(y_true)
+        curve_score.append(y_score)
+
+        # Build per-sample visualization and upload directly to wandb (no file saved)
+        fig = save_validation_visualization(
+            volume=vol,
+            label=lab,
+            pred_seg=pred_seg,
+            prob_map=prob_map,
+        )
+        
+        # Log the first sample's visualization as a representative summary image for the run
+        sample_image = wandb.Image(fig, caption=f"{sample_name} | val visualization")
+        plt.close(fig)
+        if first_sample_image is None:
+            first_sample_image = sample_image
 
         sample_metrics = {
             "dice": float(dice),
@@ -294,24 +290,12 @@ def evaluate_model(
                 "recall": sample_metrics["recall"],
                 "specificity": sample_metrics["specificity"],
                 "loss": sample_metrics["loss"],
+                "sample_image": sample_image,
             }
         )
-        log_sample_to_wandb(
-            wandb_run,
-            sample_name,
-            vol,
-            lab,
-            pred_seg,
-            prob_map,
-            sample_metrics,
-            step=i,
-        )
 
-        # Keep optional reference to probability map to ensure no linter warning for unused var in some setups.
-        _ = prob_map
-
-    # Plot and log PR/ROC curves if we have collected any samples for them
-    if plot_curves and curve_true:
+    # Plot and log PR/ROC curves if any curve data was collected
+    if curve_true:
         y_true_all = np.concatenate(curve_true)
         y_score_all = np.concatenate(curve_score)
         log_pr_roc_to_wandb(wandb_run, y_true_all, y_score_all)
@@ -328,14 +312,10 @@ def evaluate_model(
     if loss_list:
         summary["loss"] = float(np.mean(loss_list))
 
-    log_generated_files_to_wandb(
-        wandb_run,
-        visualization_path=visualization_path,
-    )
+    if wandb_run is not None and first_sample_image is not None:
+        wandb_run.log({"val/summary_visualization": first_sample_image})
 
     if wandb_run is not None:
-        # summary_payload = {f"validation/{key}": value for key, value in summary.items()}
-        # wandb_run.log(summary_payload)
         log_sample_table_to_wandb(wandb_run, sample_rows)
         log_summary_table_to_wandb(wandb_run, summary)
 
@@ -352,8 +332,6 @@ def main():
     stride = tuple(config["stride"])
     threshold = config["threshold"]
     save_results = config["save_results"]
-    plot_curves = config["plot_curves"]
-    save_visualization = config["visualize"]
     
     # wandb config
     use_wandb = config["wandb"]
@@ -375,8 +353,6 @@ def main():
                 "threshold": threshold,
                 "loss_type": loss_type,
                 "save_results": save_results,
-                "plot_curves": plot_curves,
-                "save_visualization": save_visualization,
             },
             job_type="validation",
         )
@@ -391,8 +367,6 @@ def main():
             threshold=threshold,
             loss_type=loss_type,
             save_results=save_results,
-            plot_curves=plot_curves,
-            save_visualization=save_visualization,
             wandb_run=wandb_run,
         )
 

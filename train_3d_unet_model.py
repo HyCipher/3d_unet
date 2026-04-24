@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import tifffile as tiff
 from torch.utils.data import Dataset, DataLoader
-from datetime import datetime
 from config import get_control_panel
 from nets.detect import UNet  
 from augmentations import apply_augmentation  
@@ -263,6 +262,7 @@ def train():
             #     run_sanity_check(model, dataset, device)
 
             if (epoch + 1) % controls["validate_every"] == 0 or (epoch == 0 and not loaded_pretrained):
+                # Evaluate on train set for sanity check (optional, can be disabled in config)
                 train_metrics = maybe_evaluate_train_set(
                     model,
                     train_eval_dataset,
@@ -271,6 +271,7 @@ def train():
                     criterion,
                 )
 
+                # Evaluate on validation set with optional volume limit for faster feedback
                 val_metrics = evaluate_with_optional_limit(
                     model,
                     val_dataset,
@@ -280,6 +281,7 @@ def train():
                 )
 
                 print_metrics(train_metrics, val_metrics)
+                
                 log_validation_to_wandb(train_metrics, val_metrics, epoch + 1)
 
                 scheduler.step(val_metrics["dice"])

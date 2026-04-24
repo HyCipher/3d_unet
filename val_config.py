@@ -1,5 +1,3 @@
-import datetime
-
 
 def get_validation_config():
     """Centralized defaults for standalone validation runs."""
@@ -12,8 +10,6 @@ def get_validation_config():
         "threshold": 0.1,
         "loss_type": "bce",  # "bce" | "focal" | "dicefocal"
         "save_results": True,   # Save pred/prob tif files to validation_results
-        "plot_curves": True,    # Plot PR/ROC curves
-        "visualize": True,      # Visualize predictions
         "wandb": True,          # Use Weights & Biases for logging
         "wandb_project": "c_elegans_3d_unet_validation",
         "wandb_run_name": f"run_20260422_001521",
