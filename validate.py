@@ -207,7 +207,6 @@ def evaluate_model(
     sample_rows = []
     curve_true = []
     curve_score = []
-    first_sample_image = None
 
     # Iterate through validation samples
     for i, (img_path, label_path) in enumerate(pairs, start=1):
@@ -264,11 +263,8 @@ def evaluate_model(
             prob_map=prob_map,
         )
         
-        # Log the first sample's visualization as a representative summary image for the run
         sample_image = wandb.Image(fig, caption=f"{sample_name} | val visualization")
         plt.close(fig)
-        if first_sample_image is None:
-            first_sample_image = sample_image
 
         sample_metrics = {
             "dice": float(dice),
@@ -311,9 +307,6 @@ def evaluate_model(
     }
     if loss_list:
         summary["loss"] = float(np.mean(loss_list))
-
-    if wandb_run is not None and first_sample_image is not None:
-        wandb_run.log({"val/summary_visualization": first_sample_image})
 
     if wandb_run is not None:
         log_sample_table_to_wandb(wandb_run, sample_rows)

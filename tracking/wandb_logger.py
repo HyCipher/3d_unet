@@ -116,7 +116,6 @@ def log_generated_files_to_wandb(wandb_run, visualization_path=None):
 
 def log_sample_table_to_wandb(wandb_run, sample_rows):
     """Upload per-sample metrics as a dedicated wandb table."""
-    print(f"log_sample_table_to_wandb called with {len(sample_rows)} rows") 
     if wandb_run is None or not sample_rows:
         return
 

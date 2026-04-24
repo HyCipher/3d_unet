@@ -10,7 +10,6 @@ from tracking.wandb_logger import (
     log_validation_to_wandb,
     log_pr_roc_to_wandb,
     log_sample_table_to_wandb,
-    log_generated_files_to_wandb,
     log_summary_table_to_wandb,
 )
 
@@ -22,6 +21,5 @@ __all__ = [
     "log_validation_to_wandb",
     "log_pr_roc_to_wandb",
     "log_sample_table_to_wandb",
-    "log_generated_files_to_wandb",
     "log_summary_table_to_wandb",
 ]
