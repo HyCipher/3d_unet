@@ -185,7 +185,6 @@ def maybe_save_best_model(model, val_metrics, best_val_dice):
     if val_metrics["dice"] > best_val_dice:
         best_val_dice = val_metrics["dice"]
         torch.save(model.state_dict(), "./models/unet_3d_best.pth")
-        # torch.save(model.state_dict(), f"./models/3d_unet_best_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
         print(f"Best model saved! (Dice: {best_val_dice:.4f})")
     return best_val_dice
 
@@ -256,10 +255,6 @@ def train():
             )
 
             log_training_loss(epoch=epoch + 1, train_loss=avg_epoch_loss)
-            
-            # Optional sanity check every 10 epochs (can be commented out in final version)
-            # if (epoch + 1) % 10 == 0:
-            #     run_sanity_check(model, dataset, device)
 
             if (epoch + 1) % controls["validate_every"] == 0 or (epoch == 0 and not loaded_pretrained):
                 # Evaluate on train set for sanity check (optional, can be disabled in config)
