@@ -10,6 +10,7 @@ from .contrast import random_contrast_3d
 from .blackpad import random_blackpad_3d
 from .block import random_block_3d
 from .darkline import random_darkline_3d
+from .elastic import random_elastic_deformation_3d
 from .translate import random_translate_3d
 from .data_augmentation import apply_augmentation
 
@@ -21,6 +22,7 @@ __all__ = [
     "random_blackpad_3d",
     "random_block_3d",
     "random_darkline_3d",
+    "random_elastic_deformation_3d",
     "random_translate_3d",
     "apply_augmentation",
 ]
