@@ -2,6 +2,9 @@
 
 Provides various 3D data augmentation techniques for medical imaging.
 """
+from .data_augmentation import apply_augmentation
+from .missing_section import random_missing_section
+from .section_intensity_shift import random_section_intensity_shift
 
 from .flip import random_flip_3d
 from .rotate import random_rotation_90_3d
@@ -13,6 +16,8 @@ from .darkline import random_darkline_3d
 from .elastic import random_elastic_deformation_3d
 from .translate import random_translate_3d
 from .data_augmentation import apply_augmentation
+from .missing_section import random_missing_section
+from .section_intensity_shift import random_section_intensity_shift
 
 __all__ = [
     "random_flip_3d",

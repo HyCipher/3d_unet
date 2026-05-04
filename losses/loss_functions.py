@@ -58,10 +58,11 @@ from .dice_focal import DiceFocalLoss
 #         return self.dice_weight * d_loss + self.focal_weight * f_loss
 
 
-def build_criterion(loss_type, dice_weight, focal_weight):
+def build_criterion(loss_type, dice_weight, focal_weight, pos_weight=None):
     """Build loss function from LOSS_TYPE."""
     if loss_type == "bce":
-        return nn.BCEWithLogitsLoss()
+        pw = torch.tensor([pos_weight]) if pos_weight is not None else None
+        return nn.BCEWithLogitsLoss(pos_weight=pw)
     if loss_type == "focal":
         return FocalLoss(alpha=0.25, gamma=2.0)
     if loss_type == "dicefocal":

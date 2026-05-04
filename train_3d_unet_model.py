@@ -27,10 +27,6 @@ from tracking import (
 # =========================
 class Tif3DPatchDataset(Dataset):
     def __init__(self, img_dir, label_dir, patch_size=(4, 128, 128), patches_per_volume=200, augment=True):
-        """
-        patch_size: (depth, height, width)
-        augment: whether to apply data augmentation
-        """
         self.img_paths = sorted(glob.glob(os.path.join(img_dir, "*.tif")))
         self.label_paths = sorted(glob.glob(os.path.join(label_dir, "*.tif")))
         assert len(self.img_paths) == len(self.label_paths)
@@ -154,7 +150,7 @@ def run_sanity_check(model, dataset, device):
         )
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
+def train_one_epoch(model, loader, criterion, optimizer, device, grad_clip_norm=None):
     """Run one training epoch and return avg loss."""
     model.train()
     epoch_loss = 0.0
@@ -167,6 +163,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
 
         optimizer.zero_grad()
         loss.backward()
+        if grad_clip_norm is not None and grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
         optimizer.step()
 
         epoch_loss += loss.item()
@@ -196,7 +194,7 @@ def train():
         img_dir="data/training/images",
         label_dir="data/training/labels",
         patch_size=(8, 512, 512),
-        patches_per_volume=200,
+        patches_per_volume=500,
         augment=True,
     )
 
@@ -230,11 +228,26 @@ def train():
 
     model, lr, loaded_pretrained = init_model_and_lr(device)
     controls = get_control_panel()
+
+    # Compute pos_weight from training labels to handle class imbalance in BCE.
+    # Raw ratio (neg/pos) is very large for this dataset, so cap it for stability.
+    total_voxels = sum(lab.size for lab in dataset.labels)
+    pos_voxels = sum((lab > 0).sum() for lab in dataset.labels)
+    neg_voxels = total_voxels - pos_voxels
+    raw_pos_weight = float(neg_voxels) / float(pos_voxels + 1e-8)
+    pos_weight_cap = float(controls.get("pos_weight_cap", 30.0))
+    pos_weight = min(raw_pos_weight, pos_weight_cap)
+    print(
+        f"Class balance — pos: {pos_voxels}, neg: {neg_voxels}, "
+        f"raw_pos_weight: {raw_pos_weight:.1f}, capped_pos_weight: {pos_weight:.1f}"
+    )
+
     criterion = build_criterion(
         controls["loss_type"],
         controls["dice_weight"],
         controls["focal_weight"],
-    )
+        pos_weight=pos_weight,
+    ).to(device)
 
     optimizer, scheduler = create_optimizer_and_scheduler(model, lr)
 
@@ -247,11 +260,24 @@ def train():
     
     try:
         for epoch in range(controls["num_epochs"]):
-            avg_epoch_loss = train_one_epoch(model, loader, criterion, optimizer, device)
+            # Disable augmentation in the final epochs to reduce late-stage noise.
+            disable_aug_last_epochs = int(controls.get("disable_aug_last_epochs", 0))
+            aug_enabled = (epoch + 1) <= (controls["num_epochs"] - disable_aug_last_epochs)
+            dataset.augment = aug_enabled
+
+            avg_epoch_loss = train_one_epoch(
+                model,
+                loader,
+                criterion,
+                optimizer,
+                device,
+                grad_clip_norm=float(controls.get("grad_clip_norm", 0.0)),
+            )
             current_lr = optimizer.param_groups[0]["lr"]
             print(
                 f"Epoch [{epoch+1}/{controls['num_epochs']}]  "
-                f"Loss: {avg_epoch_loss:.4f}  LR: {current_lr:.2e}"
+                f"Loss: {avg_epoch_loss:.4f}  LR: {current_lr:.2e}  "
+                f"Augment: {'ON' if dataset.augment else 'OFF'}"
             )
 
             log_training_loss(epoch=epoch + 1, train_loss=avg_epoch_loss)

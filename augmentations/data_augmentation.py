@@ -1,3 +1,5 @@
+import random
+
 from .rotate import random_rotation_90_3d
 from .flip import random_flip_3d
 from .gaussian_noise import random_gaussian_noise
@@ -7,6 +9,8 @@ from .block import random_block_3d
 from .darkline import random_darkline_3d
 from .elastic import random_elastic_deformation_3d
 from .translate import random_translate_3d
+from .missing_section import random_missing_section
+from .section_intensity_shift import random_section_intensity_shift
 
 
 def apply_augmentation(img, label, augment=True):
@@ -14,16 +18,50 @@ def apply_augmentation(img, label, augment=True):
     if not augment:
         return img, label
 
-    img, label = random_flip_3d(img, label, prob=0.8)
-    # img, label = random_rotation_90_3d(img, label, prob=0.8)
-    img, label = random_contrast_3d(img, label, prob=0.5,
-                                    contrast_range=(0.5, 1.5),brightness_range=(-0.25, 0.25), gamma_log2_range=(-1.0, 1.0)
-                                    )
-    # img, label = random_gaussian_noise(img, label, prob=0.1, std=0.01)
-    # img, label = random_blackpad_3d(img, label, prob=0.25, pad_ratio_range=(0.4, 0.9))
-    # img, label = random_block_3d(img, label, prob=0.2, shift=50)
-    img, label = random_elastic_deformation_3d(img, label, prob=0.2, alpha=20.0, sigma=6.0)
-    img, label = random_darkline_3d(img, label, prob=0.2, width_range=(10, 20))
-    img, label = random_translate_3d(img, label, prob=0.3, min_shift=(2, 2, 2), max_shift=(5, 5, 5))
+    # Keep augmentation simple: at most one geometric op + one intensity op.
+    geometric_ops = (
+        lambda image, target: random_flip_3d(image, target, prob=1.0),
+        lambda image, target: random_rotation_90_3d(image, target, prob=1.0),
+        lambda image, target: random_translate_3d(
+            image,
+            target,
+            prob=1.0,
+            min_shift=(0, 1, 1),
+            max_shift=(0, 3, 3),
+        ),
+    )
+    intensity_ops = (
+        lambda image, target: random_contrast_3d(
+            image,
+            target,
+            prob=1.0,
+            contrast_range=(0.8, 1.2),
+            brightness_range=(-0.08, 0.08),
+            gamma_log2_range=(-0.3, 0.3),
+        ),
+        lambda image, target: random_gaussian_noise(image, target, prob=1.0, std=0.03),
+        lambda image, target: random_section_intensity_shift(image, target, prob=1.0, std=0.05),
+    )
+    artifact_ops = (
+        lambda image, target: random_darkline_3d(image, target, prob=1.0, width_range=(5, 12)),
+        lambda image, target: random_missing_section(image, target, prob=1.0, max_missing=1),
+        lambda image, target: random_elastic_deformation_3d(
+            image,
+            target,
+            prob=1.0,
+            alpha=8.0,
+            sigma=8.0,
+        ),
+    )
+
+    if random.random() < 0.8:
+        img, label = random.choice(geometric_ops)(img, label)
+
+    if random.random() < 0.8:
+        img, label = random.choice(intensity_ops)(img, label)
+
+    # Rare single artifact branch for EM-specific acquisition issues.
+    if random.random() < 0.1:
+        img, label = random.choice(artifact_ops)(img, label)
 
     return img, label
