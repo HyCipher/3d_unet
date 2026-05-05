@@ -1,8 +1,8 @@
-"""Tracking package.
+"""Utils package.
 
-Provides functionality for tracking training progress and logging metrics.
+Provides functionality for recording training progress and logging metrics.
 """
-from tracking.wandb_logger import (
+from utils.wandb_logger import (
     build_wandb_config,
     finish_wandb_run,
     init_wandb_run,

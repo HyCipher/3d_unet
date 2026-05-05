@@ -1,4 +1,3 @@
-
 def get_validation_config():
     """Centralized defaults for standalone validation runs."""
     return {

@@ -30,4 +30,6 @@ __all__ = [
     "random_elastic_deformation_3d",
     "random_translate_3d",
     "apply_augmentation",
+    "random_missing_section",
+    "random_section_intensity_shift",
 ]

@@ -11,14 +11,20 @@ from .elastic import random_elastic_deformation_3d
 from .translate import random_translate_3d
 from .missing_section import random_missing_section
 from .section_intensity_shift import random_section_intensity_shift
+from .aug_config import get_aug_config
+
+_AUG_CFG = get_aug_config()
 
 
 def apply_augmentation(img, label, augment=True):
-    """统一的增强接口。"""
+    """Apply a random combination of augmentations to the image and label."""
     if not augment:
         return img, label
 
-    # Keep augmentation simple: at most one geometric op + one intensity op.
+    cfg = _AUG_CFG
+
+    # Define augmentation groups, each containing multiple specific operations.
+    # During augmentation, one operation is randomly selected from each group.
     geometric_ops = (
         lambda image, target: random_flip_3d(image, target, prob=1.0),
         lambda image, target: random_rotation_90_3d(image, target, prob=1.0),
@@ -26,42 +32,51 @@ def apply_augmentation(img, label, augment=True):
             image,
             target,
             prob=1.0,
-            min_shift=(0, 1, 1),
-            max_shift=(0, 3, 3),
+            min_shift=cfg["translate_min_shift"],
+            max_shift=cfg["translate_max_shift"],
+        ),
+        lambda image, target: random_blackpad_3d(
+            image,
+            target,
+            prob=cfg["blackpad_prob"],
+            pad_ratio_range=cfg["blackpad_pad_ratio_range"],
         ),
     )
+    
     intensity_ops = (
         lambda image, target: random_contrast_3d(
             image,
             target,
             prob=1.0,
-            contrast_range=(0.8, 1.2),
-            brightness_range=(-0.08, 0.08),
-            gamma_log2_range=(-0.3, 0.3),
+            contrast_range=cfg["contrast_range"],
+            brightness_range=cfg["brightness_range"],
+            gamma_log2_range=cfg["gamma_log2_range"],
         ),
-        lambda image, target: random_gaussian_noise(image, target, prob=1.0, std=0.03),
-        lambda image, target: random_section_intensity_shift(image, target, prob=1.0, std=0.05),
+        lambda image, target: random_gaussian_noise(image, target, prob=1.0, std=cfg["gaussian_noise_std"]),
+        lambda image, target: random_section_intensity_shift(image, target, prob=1.0, std=cfg["section_intensity_shift_std"]),
+        lambda image, target: random_block_3d(image, target, prob=cfg["block_prob"], shift=cfg["block_shift"]),
     )
+    
     artifact_ops = (
-        lambda image, target: random_darkline_3d(image, target, prob=1.0, width_range=(5, 12)),
-        lambda image, target: random_missing_section(image, target, prob=1.0, max_missing=1),
+        lambda image, target: random_darkline_3d(image, target, prob=1.0, width_range=cfg["darkline_width_range"]),
+        lambda image, target: random_missing_section(image, target, prob=1.0, max_missing=cfg["missing_section_max"]),
         lambda image, target: random_elastic_deformation_3d(
             image,
             target,
             prob=1.0,
-            alpha=8.0,
-            sigma=8.0,
+            alpha=cfg["elastic_alpha"],
+            sigma=cfg["elastic_sigma"],
         ),
     )
 
-    if random.random() < 0.8:
+    if random.random() < cfg["prob_geometric"]:
         img, label = random.choice(geometric_ops)(img, label)
 
-    if random.random() < 0.8:
+    if random.random() < cfg["prob_intensity"]:
         img, label = random.choice(intensity_ops)(img, label)
 
     # Rare single artifact branch for EM-specific acquisition issues.
-    if random.random() < 0.1:
+    if random.random() < cfg["prob_artifact"]:
         img, label = random.choice(artifact_ops)(img, label)
 
     return img, label
