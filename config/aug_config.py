@@ -1,6 +1,5 @@
 def get_aug_config():
     """Hyperparameters for data augmentation.
-
     prob_*      : probability that the entire group is applied.
     Ops inside each group are chosen uniformly at random when the group fires.
     """

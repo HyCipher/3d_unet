@@ -11,7 +11,7 @@ from .elastic import random_elastic_deformation_3d
 from .translate import random_translate_3d
 from .missing_section import random_missing_section
 from .section_intensity_shift import random_section_intensity_shift
-from .aug_config import get_aug_config
+from config.aug_config import get_aug_config
 
 _AUG_CFG = get_aug_config()
 

@@ -2,9 +2,9 @@
 def get_validation_config():
     """Centralized defaults for standalone validation runs."""
     return {
-        "model_path": "./models/run_20260501_100134/best_model.onnx",
-        "val_img_dir": "data/validation/images",
-        "val_label_dir": "data/validation/labels",
+        "model_path": "./models/run_20260501_100134/unet_3d_best.pth",
+        "val_img_dir": "data/training/images",
+        "val_label_dir": "data/training/labels",
         "patch_size": (8, 512, 512),
         "stride": (4, 256, 256),
         "threshold": 0.1,

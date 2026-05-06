@@ -1,7 +1,7 @@
 import os
 import torch
 from torch.utils.data import DataLoader
-from config import get_control_panel
+from config.tra_config import get_control_panel
 from nets.detect import UNet
 from losses import build_criterion
 from validate.evaluators import (  
@@ -16,7 +16,7 @@ from utils import (
     log_training_loss,
     log_validation_to_wandb,
 )
-from sampling import Tif3DPatchDataset
+from dataset import Tif3DPatchDataset
 
 
 # =========================
