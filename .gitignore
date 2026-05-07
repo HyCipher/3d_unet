@@ -1,6 +1,6 @@
 __pycache__/
 data/
-models/
+model_results/
 output/
 *.json
 wandb/
