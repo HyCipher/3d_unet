@@ -1,4 +1,3 @@
-import glob
 import os
 
 import matplotlib.pyplot as plt
@@ -6,26 +5,22 @@ import numpy as np
 import onnxruntime as ort
 import tifffile as tiff
 import torch
-import torch.nn as nn
 import wandb
 
-from losses import DiceFocalLoss, FocalLoss
-from val_config import get_validation_config
+from config.val_config import get_validation_config
 from validate.metrics import dice_coefficient, iou_score, precision_recall_f1_specificity
-from utils import log_pr_roc_to_wandb, log_sample_table_to_wandb, log_summary_table_to_wandb
+from evaluation import (
+    load_validation_pairs,
+    save_prediction_results,
+    sample_for_curves,
+    save_validation_visualization,
+)
+from evaluation.inference import gen_starts
+from evaluation.loss_factory import build_validation_criterion
+from utils import *
 
 
 VAL_CONFIG = get_validation_config()
-
-
-def _gen_starts(length, patch, stride):
-    if length <= patch:
-        return [0]
-    starts = list(range(0, length - patch + 1, stride))
-    if starts[-1] != length - patch:
-        starts.append(length - patch)
-    return starts
-
 
 def _sigmoid_np(x):
     return 1.0 / (1.0 + np.exp(-x))
@@ -61,9 +56,9 @@ def sliding_window_inference_onnx(
     count_map = np.zeros((z_len, h_len, w_len), dtype=np.float32)
     patch_losses = []
 
-    z_starts = _gen_starts(z_len, pd, sd)
-    y_starts = _gen_starts(h_len, ph, sh)
-    x_starts = _gen_starts(w_len, pw, sw)
+    z_starts = gen_starts(z_len, pd, sd)
+    y_starts = gen_starts(h_len, ph, sh)
+    x_starts = gen_starts(w_len, pw, sw)
 
     for z0 in z_starts:
         for y0 in y_starts:
@@ -90,87 +85,6 @@ def sliding_window_inference_onnx(
     avg_loss = float(np.mean(patch_losses)) if patch_losses else None
     return output, pred_seg, avg_loss
 
-
-def load_validation_pairs(img_dir, label_dir):
-    img_paths = sorted(glob.glob(os.path.join(img_dir, "*.tif")))
-    label_paths = sorted(glob.glob(os.path.join(label_dir, "*.tif")))
-
-    if len(img_paths) == 0:
-        raise FileNotFoundError(f"No .tif files found in {img_dir}")
-    if len(img_paths) != len(label_paths):
-        raise ValueError(
-            f"Image/label count mismatch: {len(img_paths)} images vs {len(label_paths)} labels"
-        )
-
-    return list(zip(img_paths, label_paths))
-
-
-def save_prediction_results(prob_map, pred_seg, img_path, out_dir="validation_results_onnx"):
-    os.makedirs(out_dir, exist_ok=True)
-    base = os.path.basename(img_path)
-
-    pred_hwz = np.transpose(pred_seg.astype(np.uint8) * 255, (1, 2, 0))
-    prob_hwz = np.transpose(prob_map.astype(np.float32), (1, 2, 0))
-
-    pred_path = os.path.join(out_dir, f"pred_{base}")
-    prob_path = os.path.join(out_dir, f"prob_{base}")
-    tiff.imwrite(pred_path, pred_hwz)
-    tiff.imwrite(prob_path, prob_hwz)
-
-
-def sample_for_curves(gt_seg, prob_map, max_points=300000):
-    y_true = gt_seg.reshape(-1).astype(np.uint8)
-    y_score = prob_map.reshape(-1).astype(np.float32)
-
-    if y_true.size > max_points:
-        step = int(np.ceil(y_true.size / max_points))
-        y_true = y_true[::step]
-        y_score = y_score[::step]
-
-    return y_true, y_score
-
-
-def save_validation_visualization(volume, label, pred_seg, prob_map):
-    z_mid = volume.shape[0] // 2
-
-    img_slice = volume[z_mid]
-    gt_slice = (label[z_mid] > 0).astype(np.uint8)
-    pred_slice = pred_seg[z_mid].astype(np.uint8)
-    prob_slice = prob_map[z_mid]
-
-    fig, axes = plt.subplots(2, 3, figsize=(14, 9))
-
-    axes[0, 0].imshow(img_slice, cmap="gray")
-    axes[0, 0].set_title("Original")
-    axes[0, 0].axis("off")
-
-    axes[0, 1].imshow(gt_slice, cmap="gray")
-    axes[0, 1].set_title("Label")
-    axes[0, 1].axis("off")
-
-    axes[0, 2].imshow(pred_slice, cmap="gray")
-    axes[0, 2].set_title("Prediction")
-    axes[0, 2].axis("off")
-
-    im = axes[1, 0].imshow(prob_slice, cmap="viridis", vmin=0.0, vmax=1.0)
-    axes[1, 0].set_title("Probability")
-    axes[1, 0].axis("off")
-    fig.colorbar(im, ax=axes[1, 0], fraction=0.046, pad=0.04)
-
-    axes[1, 1].imshow(img_slice, cmap="gray")
-    axes[1, 1].imshow(gt_slice, cmap="Reds", alpha=0.4)
-    axes[1, 1].set_title("Ground Truth Overlay")
-    axes[1, 1].axis("off")
-
-    axes[1, 2].imshow(img_slice, cmap="gray")
-    axes[1, 2].imshow(pred_slice, cmap="Blues", alpha=0.4)
-    axes[1, 2].set_title("Prediction Overlay")
-    axes[1, 2].axis("off")
-
-    plt.tight_layout()
-    return fig
-
-
 def evaluate_model_onnx(
     model_path,
     val_img_dir,
@@ -184,13 +98,7 @@ def evaluate_model_onnx(
 ):
     session, input_name, output_name = build_onnx_session(model_path)
 
-    criterion = None
-    if loss_type == "bce":
-        criterion = nn.BCEWithLogitsLoss()
-    elif loss_type == "focal":
-        criterion = FocalLoss(alpha=0.25, gamma=2.0)
-    elif loss_type == "dicefocal":
-        criterion = DiceFocalLoss(alpha=0.25, gamma=2.0, dice_weight=0.8, focal_weight=1.5)
+    criterion = build_validation_criterion(loss_type)
 
     pairs = load_validation_pairs(val_img_dir, val_label_dir)
 

@@ -9,6 +9,7 @@ from utils.wandb_logger import (
     log_training_loss,
     log_validation_to_wandb,
     log_pr_roc_to_wandb,
+    log_f1_curve_to_wandb,
     log_sample_table_to_wandb,
     log_summary_table_to_wandb,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "log_training_loss",
     "log_validation_to_wandb",
     "log_pr_roc_to_wandb",
+    "log_f1_curve_to_wandb",
     "log_sample_table_to_wandb",
     "log_summary_table_to_wandb",
 ]

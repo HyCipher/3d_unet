@@ -4,19 +4,13 @@ import wandb
 from datetime import datetime
 from torch.utils.data import DataLoader
 from config.tra_config import get_control_panel
-from nets.detect import UNet
 from losses import build_criterion
 from validate.evaluators import (  
     evaluate_with_optional_limit,
     maybe_evaluate_train_set,
 )
 from validate.reporting import print_metrics  
-from utils import (
-    build_wandb_config,
-    finish_wandb_run,
-    log_training_loss,
-    log_validation_to_wandb,
-)
+from utils import *
 from dataset import Tif3DPatchDataset
 from training import *
 
@@ -24,64 +18,6 @@ from training import *
 # =========================
 # Training
 # =========================
-def init_model_and_lr(device, pretrained_path="./models/unet_3d_best.pth"):
-    """Create model and optionally load a pretrained checkpoint."""
-    model = UNet().to(device)
-    if os.path.exists(pretrained_path):
-        model.load_state_dict(torch.load(pretrained_path))
-        print(f"Loaded pre-trained model from {pretrained_path}")
-        return model, 1e-4, True
-
-    print("No pre-trained model found, starting from scratch")
-    return model, 1e-4, False
-
-
-# def create_optimizer_and_scheduler(model, lr):
-#     """Create optimizer and LR scheduler."""
-#     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-#         optimizer,
-#         mode="max",
-#         factor=0.5,
-#         patience=2,
-#         min_lr=1e-6,
-#     )
-#     return optimizer, scheduler
-
-
-# def train_one_epoch(model, loader, criterion, optimizer, device, grad_clip_norm=None):
-#     """Run one training epoch and return avg loss."""
-#     model.train()
-#     epoch_loss = 0.0
-#     for x, y in loader:
-#         x = x.to(device)
-#         y = y.to(device)
-
-#         pred = model(x)
-#         loss = criterion(pred, y)
-
-#         optimizer.zero_grad()
-#         loss.backward()
-#         if grad_clip_norm is not None and grad_clip_norm > 0:
-#             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
-#         optimizer.step()
-
-#         epoch_loss += loss.item()
-#     return epoch_loss / len(loader)
-
-
-# def save_best_model(model, val_metrics, best_val_dice, sample_input):
-#     """Save best model by validation dice and return updated best score."""
-#     if val_metrics["dice"] > best_val_dice:
-#         best_val_dice = val_metrics["dice"]
-#         torch.save(model.state_dict(), "./models/unet_3d_best.pth")
-#         model.eval()
-#         torch.onnx.export(model, sample_input, "./models/unet_3d_best.onnx")
-#         model.train()
-#         print(f"Best model saved! (Dice: {best_val_dice:.4f})")
-#     return best_val_dice
-
-
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
