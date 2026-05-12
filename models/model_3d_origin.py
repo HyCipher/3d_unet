@@ -29,12 +29,14 @@ class ConvBlock3D(nn.Module):
         self.conv1 = conv3x3x3(in_channels, out_channels)
         self.conv2 = conv3x3x3(out_channels, out_channels)
         self.conv3 = conv3x3x3(out_channels, out_channels)
-        self.norm = nn.BatchNorm3d(out_channels)
+        self.norm1 = nn.BatchNorm3d(out_channels)
+        self.norm2 = nn.BatchNorm3d(out_channels)
+        self.norm3 = nn.BatchNorm3d(out_channels)
     
     def forward(self, x):
-        x = F.relu(self.norm(self.conv1(x)))
-        x = F.relu(self.norm(self.conv2(x)))
-        x = F.relu(self.norm(self.conv3(x)))
+        x = F.relu(self.norm1(self.conv1(x)))
+        x = F.relu(self.norm2(self.conv2(x)))
+        x = F.relu(self.norm3(self.conv3(x)))
         return x
 
 # 3D下采样块
@@ -45,13 +47,15 @@ class DownConvBlock3D(nn.Module):
         self.conv1 = conv3x3x3(in_channels, out_channels)
         self.conv2 = conv3x3x3(out_channels, out_channels)
         self.conv3 = conv3x3x3(out_channels, out_channels)
-        self.norm = nn.BatchNorm3d(out_channels)
+        self.norm1 = nn.BatchNorm3d(out_channels)
+        self.norm2 = nn.BatchNorm3d(out_channels)
+        self.norm3 = nn.BatchNorm3d(out_channels)
     
     def forward(self, x):
         x = self.maxpool(x)
-        x = F.relu(self.norm(self.conv1(x)))
-        x = F.relu(self.norm(self.conv2(x)))
-        x = F.relu(self.norm(self.conv3(x)))
+        x = F.relu(self.norm1(self.conv1(x)))
+        x = F.relu(self.norm2(self.conv2(x)))
+        x = F.relu(self.norm3(self.conv3(x)))
         return x
 
 # 3D上采样块
@@ -62,14 +66,16 @@ class UpConvBlock3D(nn.Module):
         self.conv1 = conv3x3x3(in_channels, out_channels)
         self.conv2 = conv3x3x3(out_channels, out_channels)
         self.conv3 = conv3x3x3(out_channels, out_channels)
-        self.norm = nn.BatchNorm3d(out_channels)
+        self.norm1 = nn.BatchNorm3d(out_channels)
+        self.norm2 = nn.BatchNorm3d(out_channels)
+        self.norm3 = nn.BatchNorm3d(out_channels)
     
     def forward(self, xh, xv):
         xv = self.upconv(xv)
         x = torch.cat([xh, xv], dim=1)
-        x = F.relu(self.norm(self.conv1(x)))
-        x = F.relu(self.norm(self.conv2(x)))
-        x = F.relu(self.norm(self.conv3(x)))
+        x = F.relu(self.norm1(self.conv1(x)))
+        x = F.relu(self.norm2(self.conv2(x)))
+        x = F.relu(self.norm3(self.conv3(x)))
         return x
 
 # 3D UNet模型

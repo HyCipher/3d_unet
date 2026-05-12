@@ -1,5 +1,4 @@
 import os
-
 import matplotlib.pyplot as plt
 import numpy as np
 import onnxruntime as ort
@@ -17,7 +16,11 @@ from evaluation import (
 )
 from evaluation.inference import gen_starts
 from evaluation.loss_factory import build_validation_criterion
-from utils import *
+from utils import (
+    log_pr_roc_to_wandb,
+    log_sample_table_to_wandb,
+    log_summary_table_to_wandb,
+)
 
 
 VAL_CONFIG = get_validation_config()

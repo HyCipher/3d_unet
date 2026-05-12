@@ -1,16 +1,20 @@
 import os
 import torch
-import wandb
-from datetime import datetime
 from torch.utils.data import DataLoader
-from config.tra_config import get_control_panel
+from config.tra_config import tra_val_hyper
 from losses import build_criterion
 from validate.evaluators import (  
     evaluate_with_optional_limit,
     maybe_evaluate_train_set,
 )
 from validate.reporting import print_metrics  
-from utils import *
+from utils import (
+    build_wandb_config,
+    init_wandb_run,
+    log_training_loss,
+    log_validation_to_wandb,
+    finish_wandb_run,
+)
 from dataset import Tif3DPatchDataset
 from training import *
 
@@ -28,8 +32,6 @@ def train():
         patches_per_volume=500,
         augment=True,
     )
-
-    sample_input = dataset[0][0].unsqueeze(0)
 
     loader = DataLoader(
         dataset,
@@ -57,7 +59,7 @@ def train():
     )
 
     model, lr, loaded_pretrained = init_model_and_lr(device)
-    controls = get_control_panel()
+    controls = tra_val_hyper()
 
     # Compute pos_weight from training labels to handle class imbalance in BCE.
     # Raw ratio (neg/pos) is very large for this dataset, so cap it for stability.
@@ -89,21 +91,14 @@ def train():
         min_lr=1e-6,
     )
     
-    sample_input = sample_input.to(device)
+    sample_input = dataset[0][0].unsqueeze(0).to(device)
 
     # Track best validation dice to save best model checkpoint
     best_val_dice = 0.0
 
     # Initialize wandb run before training loop
     wandb_config = build_wandb_config(loader, lr, controls)
-    
-    
-    # init_wandb_run(project="c_elegans_3d_unet", config=wandb_config)
-    wandb.init(
-        project="c_elegans_3d_unet",
-        name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        config=wandb_config,
-    )
+    init_wandb_run(project="c_elegans_3d_unet", config=wandb_config)
     
     try:
         for epoch in range(controls["num_epochs"]):
@@ -151,8 +146,8 @@ def train():
                 print(f"Scheduler updated by validation Dice; next LR: {optimizer.param_groups[0]['lr']:.2e}")
 
                 # Save periodic epoch checkpoint and best model by validation Dice
-                os.makedirs("./models", exist_ok=True)
-                model_path = f"./models/unet_3d_epoch_{epoch + 1}.pth"
+                os.makedirs("./model_results", exist_ok=True)
+                model_path = f"./model_results/unet_3d_epoch_{epoch + 1}.pth"
                 torch.save(model.state_dict(), model_path)
                 print(f"Model saved: {model_path}")
 
@@ -164,7 +159,7 @@ def train():
 
     except KeyboardInterrupt:
         print("Training interrupted by user.")
-        torch.save(model.state_dict(), "./models/unet_3d_interrupted.pth")
+        torch.save(model.state_dict(), "./model_results/unet_3d_interrupted.pth")
         print("Model saved as: unet_3d_interrupted.pth")
         finish_wandb_run()
 

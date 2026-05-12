@@ -3,27 +3,36 @@ from validate.validation_utils import validate_with_full_metrics  # pyright: ign
 
 def evaluate_with_optional_limit(model, dataset, device, controls, criterion):
     """Evaluate validation dataset with optional volume cap for speed."""
-    original_volumes = dataset.volumes
-    original_labels = dataset.labels
     max_val_volumes = controls["max_val_volumes"]
 
-    if max_val_volumes is not None:
+    if max_val_volumes is None:
+        return validate_with_full_metrics(
+            model,
+            dataset,
+            device,
+            patch_size=controls["val_patch_size"],
+            stride=controls["val_stride"],
+            threshold=controls["val_threshold"],
+            criterion=criterion,
+        )
+
+    original_volumes = dataset.volumes
+    original_labels = dataset.labels
+    try:
         dataset.volumes = dataset.volumes[:max_val_volumes]
         dataset.labels = dataset.labels[:max_val_volumes]
-
-    metrics = validate_with_full_metrics(
-        model,
-        dataset,
-        device,
-        patch_size=controls["val_patch_size"],
-        stride=controls["val_stride"],
-        threshold=controls["val_threshold"],
-        criterion=criterion,
-    )
-
-    dataset.volumes = original_volumes
-    dataset.labels = original_labels
-    return metrics
+        return validate_with_full_metrics(
+            model,
+            dataset,
+            device,
+            patch_size=controls["val_patch_size"],
+            stride=controls["val_stride"],
+            threshold=controls["val_threshold"],
+            criterion=criterion,
+        )
+    finally:
+        dataset.volumes = original_volumes
+        dataset.labels = original_labels
 
 
 def maybe_evaluate_train_set(model, train_eval_dataset, device, controls, criterion):

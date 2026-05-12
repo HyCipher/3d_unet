@@ -17,7 +17,12 @@ from evaluation import (
 from evaluation.inference import sliding_window_inference
 from evaluation.loss_factory import build_validation_criterion
 from evaluation.pr_curve import sample_for_curves
-from utils import *
+from utils import (
+    log_pr_roc_to_wandb,
+    log_f1_curve_to_wandb,
+    log_sample_table_to_wandb,
+    log_summary_table_to_wandb,
+)
 
 
 VAL_CONFIG = get_validation_config()
@@ -106,15 +111,16 @@ def evaluate_model(
         curve_score.append(y_score)
 
         # Build per-sample visualization and upload directly to wandb (no file saved)
-        fig = save_validation_visualization(
-            volume=vol,
-            label=lab,
-            pred_seg=pred_seg,
-            prob_map=prob_map,
-        )
-        
-        sample_image = wandb.Image(fig, caption=f"{sample_name} | val visualization")
-        plt.close(fig)
+        sample_image = None
+        if wandb_run is not None:
+            fig = save_validation_visualization(
+                volume=vol,
+                label=lab,
+                pred_seg=pred_seg,
+                prob_map=prob_map,
+            )
+            sample_image = wandb.Image(fig, caption=f"{sample_name} | val visualization")
+            plt.close(fig)
 
         sample_metrics = {
             "dice": float(dice),
