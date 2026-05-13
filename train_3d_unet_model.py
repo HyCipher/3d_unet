@@ -10,6 +10,7 @@ from validate.evaluators import (
 from validate.reporting import print_metrics  
 from utils import (
     build_wandb_config,
+    build_aug_wandb_config,
     init_wandb_run,
     log_training_loss,
     log_validation_to_wandb,
@@ -98,6 +99,7 @@ def train():
 
     # Initialize wandb run before training loop
     wandb_config = build_wandb_config(loader, lr, controls)
+    wandb_config.update(build_aug_wandb_config())
     init_wandb_run(project="c_elegans_3d_unet", config=wandb_config)
     
     try:

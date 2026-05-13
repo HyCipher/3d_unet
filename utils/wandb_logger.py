@@ -1,8 +1,20 @@
-from datetime import datetime
-import os
-import numpy as np
-import wandb
+# Re-export shim — kept for backward compatibility.
+# Import directly from the individual modules for clarity:
+#   utils.wandb_run      — Run lifecycle
+#   utils.wandb_metrics  — Training / validation scalar metrics
+#   utils.wandb_curves   — PR/ROC and F1 curves
+#   utils.wandb_tables   — Tables and file artifacts
+from utils.wandb_run import build_wandb_config, init_wandb_run, finish_wandb_run
+from utils.wandb_metrics import log_training_loss, log_validation_to_wandb
+from utils.wandb_curves import log_pr_roc_to_wandb, log_f1_curve_to_wandb
+from utils.wandb_tables import (
+    log_sample_table_to_wandb,
+    log_summary_table_to_wandb,
+    log_generated_files_to_wandb,
+)
 
+
+# ── Run Lifecycle ──────────────────────────────────────────────────────────────
 
 def build_wandb_config(loader, lr, controls):
     """Build wandb config from runtime values."""
@@ -36,10 +48,19 @@ def init_wandb_run(project, config):
     )
 
 
+def finish_wandb_run():
+    """Close current wandb run."""
+    wandb.finish()
+
+
+# ── Training Logging ───────────────────────────────────────────────────────────
+
 def log_training_loss(epoch, train_loss):
     """Log train loss for one epoch."""
     wandb.log({"train_loss": train_loss, "epoch": epoch})
 
+
+# ── Validation Metrics ─────────────────────────────────────────────────────────
 
 def log_validation_to_wandb(train_metrics, val_metrics, epoch):
     """Send validation metrics to wandb."""
@@ -64,9 +85,172 @@ def log_validation_to_wandb(train_metrics, val_metrics, epoch):
     wandb.log(payload)
 
 
-def finish_wandb_run():
-    """Close current wandb run."""
-    wandb.finish()
+# ── Validation Curves ──────────────────────────────────────────────────────────
+
+def log_pr_roc_to_wandb(wandb_run, y_true, y_score):
+    """Log PR/ROC curves to wandb using native curve visualizations."""
+    if wandb_run is None:
+        print("Skip PR/ROC upload: wandb is disabled.")
+        return
+
+    if y_true.size == 0:
+        print("Skip PR/ROC plot: no sampled points.")
+        return
+
+    if np.unique(y_true).size < 2:
+        print("Skip PR/ROC plot: ground truth has only one class.")
+        return
+
+    y_true = y_true.astype(np.int32)
+    y_score = np.clip(y_score.astype(np.float32), 0.0, 1.0)
+    y_proba = np.stack([1.0 - y_score, y_score], axis=1)
+
+    wandb_run.log(
+        {
+            "val/pr_curve": wandb.plot.pr_curve(
+                y_true,
+                y_proba,
+                labels=["background", "foreground"],
+            ),
+            "val/roc_curve": wandb.plot.roc_curve(
+                y_true,
+                y_proba,
+                labels=["background", "foreground"],
+            ),
+        }
+    )
+    print("PR/ROC curves logged to wandb.")
+
+
+def log_f1_curve_to_wandb(wandb_run, y_true, y_score, num_thresholds=100):
+    """Log F1 score vs threshold curve to wandb as a custom line plot."""
+    if wandb_run is None:
+        print("Skip F1 curve upload: wandb is disabled.")
+        return
+
+    if y_true.size == 0:
+        print("Skip F1 curve: no sampled points.")
+        return
+
+    if np.unique(y_true).size < 2:
+        print("Skip F1 curve: ground truth has only one class.")
+        return
+
+    y_true = y_true.astype(np.float32)
+    y_score = np.clip(y_score.astype(np.float32), 0.0, 1.0)
+
+    thresholds = np.linspace(0.0, 1.0, num_thresholds)
+    f1_scores = []
+    for t in thresholds:
+        pred = (y_score >= t).astype(np.float32)
+        tp = np.sum(pred * y_true)
+        fp = np.sum(pred * (1.0 - y_true))
+        fn = np.sum((1.0 - pred) * y_true)
+        denom = 2.0 * tp + fp + fn
+        f1 = (2.0 * tp / denom) if denom > 0 else 0.0
+        f1_scores.append(float(f1))
+
+    table = wandb.Table(columns=["threshold", "f1"])
+    for t, f1 in zip(thresholds.tolist(), f1_scores):
+        table.add_data(round(t, 4), round(f1, 6))
+
+    wandb_run.log(
+        {
+            "val/f1_curve": wandb.plot.line(
+                table,
+                x="threshold",
+                y="f1",
+                title="F1 Score vs Threshold",
+            )
+        }
+    )
+    print("F1 curve logged to wandb.")
+
+
+# ── Validation Tables & Artifacts ─────────────────────────────────────────────
+
+def log_sample_table_to_wandb(wandb_run, sample_rows):
+    """Upload per-sample metrics as a dedicated wandb table."""
+    if wandb_run is None or not sample_rows:
+        return
+
+    columns = [
+        "sample_index",
+        "sample_name",
+        "dice",
+        "iou",
+        "f1",
+        "precision",
+        "recall",
+        "specificity",
+        "loss",
+        "sample_image",
+    ]
+    table = wandb.Table(columns=columns)
+    for row in sample_rows:
+        table.add_data(
+            row.get("sample_index"),
+            row.get("sample_name"),
+            row.get("dice"),
+            row.get("iou"),
+            row.get("f1"),
+            row.get("precision"),
+            row.get("recall"),
+            row.get("specificity"),
+            row.get("loss"),
+            row.get("sample_image"),
+        )
+
+    wandb_run.log({"val/sample_table": table})
+
+
+def log_summary_table_to_wandb(wandb_run, summary):
+    """Upload summary metrics as a wandb table."""
+    if wandb_run is None or not summary:
+        return
+
+    table = wandb.Table(columns=["metric", "value"])
+    for key, value in summary.items():
+        table.add_data(key, float(value))
+
+    wandb_run.log({"val/summary_table": table})
+
+
+def log_generated_files_to_wandb(wandb_run, visualization_path=None):
+    """Upload generated validation PNG files to wandb."""
+    if wandb_run is None:
+        return
+
+    payload = {}
+    if visualization_path and os.path.exists(visualization_path):
+        payload["val/summary_visualization"] = wandb.Image(visualization_path)
+
+    if payload:
+        wandb_run.log(payload)
+
+
+
+def log_validation_to_wandb(train_metrics, val_metrics, epoch):
+    """Send validation metrics to wandb."""
+    train_metrics = train_metrics or {}
+    payload = {
+        "epoch": epoch,
+        "train_dice": train_metrics.get("dice"),
+        "train_iou": train_metrics.get("iou"),
+        "train_f1": train_metrics.get("f1"),
+        "train_precision": train_metrics.get("precision"),
+        "train_recall": train_metrics.get("recall"),
+        "train_specificity": train_metrics.get("specificity"),
+        "val_dice": val_metrics["dice"],
+        "val_iou": val_metrics["iou"],
+        "val_f1": val_metrics["f1"],
+        "val_precision": val_metrics["precision"],
+        "val_recall": val_metrics["recall"],
+        "val_specificity": val_metrics["specificity"],
+    }
+    if "loss" in val_metrics:
+        payload["val_loss"] = val_metrics["loss"]
+    wandb.log(payload)
 
 
 def log_pr_roc_to_wandb(wandb_run, y_true, y_score):
@@ -115,6 +299,7 @@ def log_generated_files_to_wandb(wandb_run, visualization_path=None):
 
     if payload:
         wandb_run.log(payload)
+
 
 def log_sample_table_to_wandb(wandb_run, sample_rows):
     """Upload per-sample metrics as a dedicated wandb table."""

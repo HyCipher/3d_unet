@@ -42,7 +42,7 @@ def evaluate_model(
     # Set device and load model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = UNet().to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
     # Optionally build criterion if loss logging is enabled
