@@ -8,7 +8,8 @@ def print_metrics(train_metrics, val_metrics):
             f"F1: {train_metrics['f1']:.4f}, "
             f"Precision: {train_metrics['precision']:.4f}, "
             f"Recall: {train_metrics['recall']:.4f}, "
-            f"Specificity: {train_metrics['specificity']:.4f}"
+            f"Specificity: {train_metrics['specificity']:.4f}, "
+            f"Accuracy: {train_metrics['accuracy']:.4f}"
         )
 
     if "loss" in val_metrics:
@@ -21,5 +22,6 @@ def print_metrics(train_metrics, val_metrics):
         f"F1: {val_metrics['f1']:.4f}, "
         f"Precision: {val_metrics['precision']:.4f}, "
         f"Recall: {val_metrics['recall']:.4f}, "
-        f"Specificity: {val_metrics['specificity']:.4f}"
+        f"Specificity: {val_metrics['specificity']:.4f}, "
+        f"Accuracy: {val_metrics['accuracy']:.4f}"
     )

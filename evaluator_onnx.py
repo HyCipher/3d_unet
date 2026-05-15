@@ -15,6 +15,7 @@ from evaluation import (
     save_validation_visualization,
 )
 from evaluation.inference import gen_starts
+from evaluation.postprocessing import remove_small_connected_components
 from evaluation.loss_factory import build_validation_criterion
 from utils import (
     log_pr_roc_to_wandb,
@@ -49,6 +50,7 @@ def sliding_window_inference_onnx(
     patch_size=(16, 512, 512),
     stride=(8, 256, 256),
     threshold=0.5,
+    dust_remove_min_size=0,
     criterion=None,
 ):
     z_len, h_len, w_len = volume.shape
@@ -85,6 +87,7 @@ def sliding_window_inference_onnx(
 
     output /= np.maximum(count_map, 1e-8)
     pred_seg = (output > threshold).astype(np.uint8)
+    pred_seg = remove_small_connected_components(pred_seg, min_size=dust_remove_min_size)
     avg_loss = float(np.mean(patch_losses)) if patch_losses else None
     return output, pred_seg, avg_loss
 
@@ -95,6 +98,7 @@ def evaluate_model_onnx(
     patch_size=VAL_CONFIG["patch_size"],
     stride=VAL_CONFIG["stride"],
     threshold=VAL_CONFIG["threshold"],
+    dust_remove_min_size=VAL_CONFIG["dust_remove_min_size"],
     loss_type=VAL_CONFIG["loss_type"],
     save_results=VAL_CONFIG["save_results"],
     wandb_run=None,
@@ -111,6 +115,7 @@ def evaluate_model_onnx(
     precision_list = []
     recall_list = []
     specificity_list = []
+    accuracy_list = []
     loss_list = []
     sample_rows = []
     curve_true = []
@@ -133,6 +138,7 @@ def evaluate_model_onnx(
             patch_size=patch_size,
             stride=stride,
             threshold=threshold,
+            dust_remove_min_size=dust_remove_min_size,
             criterion=criterion,
         )
 
@@ -140,7 +146,7 @@ def evaluate_model_onnx(
 
         dice = dice_coefficient(pred_seg, gt_seg)
         iou = iou_score(pred_seg, gt_seg)
-        precision, recall, f1, specificity = precision_recall_f1_specificity(pred_seg, gt_seg)
+        precision, recall, f1, specificity, accuracy = precision_recall_f1_specificity(pred_seg, gt_seg)
 
         dice_list.append(dice)
         iou_list.append(iou)
@@ -148,6 +154,7 @@ def evaluate_model_onnx(
         precision_list.append(precision)
         recall_list.append(recall)
         specificity_list.append(specificity)
+        accuracy_list.append(accuracy)
 
         if sample_loss is not None:
             loss_list.append(sample_loss)
@@ -180,6 +187,7 @@ def evaluate_model_onnx(
                 "precision": float(precision),
                 "recall": float(recall),
                 "specificity": float(specificity),
+                "accuracy": float(accuracy),
                 "loss": float(sample_loss) if sample_loss is not None else None,
                 "sample_image": sample_image,
             }
@@ -197,6 +205,7 @@ def evaluate_model_onnx(
         "precision": float(np.mean(precision_list)),
         "recall": float(np.mean(recall_list)),
         "specificity": float(np.mean(specificity_list)),
+        "accuracy": float(np.mean(accuracy_list)),
     }
     if loss_list:
         summary["loss"] = float(np.mean(loss_list))
@@ -216,6 +225,7 @@ def main():
     patch_size = tuple(config["patch_size"])
     stride = tuple(config["stride"])
     threshold = config["threshold"]
+    dust_remove_min_size = config["dust_remove_min_size"]
     loss_type = config["loss_type"]
     save_results = config["save_results"]
 
@@ -238,10 +248,12 @@ def main():
                 "patch_size": patch_size,
                 "stride": stride,
                 "threshold": threshold,
+                "dust_remove_min_size": dust_remove_min_size,
                 "loss_type": loss_type,
                 "save_results": save_results,
             },
             job_type="validation-onnx",
+            settings=wandb.Settings(silent=True, console="off"),
         )
 
     try:
@@ -252,6 +264,7 @@ def main():
             patch_size=patch_size,
             stride=stride,
             threshold=threshold,
+            dust_remove_min_size=dust_remove_min_size,
             loss_type=loss_type,
             save_results=save_results,
             wandb_run=wandb_run,
@@ -264,6 +277,7 @@ def main():
         print(f"Precision: {summary['precision']:.4f}")
         print(f"Recall: {summary['recall']:.4f}")
         print(f"Specificity: {summary['specificity']:.4f}")
+        print(f"Accuracy: {summary['accuracy']:.4f}")
         if "loss" in summary:
             print(f"Validation Loss: {summary['loss']:.4f}")
 

@@ -18,6 +18,7 @@ def log_sample_table_to_wandb(wandb_run, sample_rows):
         "precision",
         "recall",
         "specificity",
+        "accuracy",
         "loss",
         "sample_image",
     ]
@@ -32,6 +33,7 @@ def log_sample_table_to_wandb(wandb_run, sample_rows):
             row.get("precision"),
             row.get("recall"),
             row.get("specificity"),
+            row.get("accuracy"),
             row.get("loss"),
             row.get("sample_image"),
         )

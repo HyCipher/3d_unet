@@ -1,9 +1,8 @@
 import json
 
 import numpy as np
-import torch
-from evaluation.inference import sliding_window_inference  # pyright: ignore[reportMissingImports]
-from validate.metrics import (  # pyright: ignore[reportMissingImports]
+from evaluation.inference import sliding_window_inference 
+from validate.metrics import (
     dice_coefficient,
     iou_score,
     precision_recall_f1_specificity,
@@ -17,6 +16,7 @@ def validate_with_full_metrics(
     patch_size=(8, 512, 512),
     stride=(2, 64, 64),
     threshold=0.5,
+    dust_remove_min_size=0,
     criterion=None,
 ):
     """计算完整指标：Dice, IoU, F1, Precision, Recall, Specificity（可选 val loss）"""
@@ -27,6 +27,7 @@ def validate_with_full_metrics(
     precision_scores = []
     recall_scores = []
     specificity_scores = []
+    accuracy_scores = []
     loss_values = []
 
     total_volumes = len(dataset.volumes)
@@ -43,6 +44,7 @@ def validate_with_full_metrics(
             patch_size=patch_size,
             stride=stride,
             threshold=threshold,
+            dust_remove_min_size=dust_remove_min_size,
             device=device,
             criterion=criterion,
         )
@@ -55,11 +57,12 @@ def validate_with_full_metrics(
         dice_scores.append(dice_coefficient(pred_seg, gt_seg))
         iou_scores.append(iou_score(pred_seg, gt_seg))
 
-        precision, recall, f1, specificity = precision_recall_f1_specificity(pred_seg, gt_seg)
+        precision, recall, f1, specificity, accuracy = precision_recall_f1_specificity(pred_seg, gt_seg)
         precision_scores.append(precision)
         recall_scores.append(recall)
         f1_scores.append(f1)
         specificity_scores.append(specificity)
+        accuracy_scores.append(accuracy)
 
     result = {
         "dice": np.mean(dice_scores),
@@ -68,6 +71,7 @@ def validate_with_full_metrics(
         "precision": np.mean(precision_scores),
         "recall": np.mean(recall_scores),
         "specificity": np.mean(specificity_scores),
+        "accuracy": np.mean(accuracy_scores),
     }
     if loss_values:
         result["loss"] = float(np.mean(loss_values))

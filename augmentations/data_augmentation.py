@@ -26,19 +26,19 @@ def apply_augmentation(img, label, augment=True):
     # Define augmentation groups, each containing multiple specific operations.
     # During augmentation, one operation is randomly selected from each group.
     geometric_ops = (
-        lambda image, target: random_flip_3d(image, target, prob=1.0),
-        lambda image, target: random_rotation_90_3d(image, target, prob=1.0),
+        lambda image, target: random_flip_3d(image, target, prob=cfg["prob_flip"]),
+        lambda image, target: random_rotation_90_3d(image, target, prob=cfg["prob_rotation_90"]),
         lambda image, target: random_translate_3d(
             image,
             target,
-            prob=1.0,
+            prob=cfg["prob_translate"],
             min_shift=cfg["translate_min_shift"],
             max_shift=cfg["translate_max_shift"],
         ),
         lambda image, target: random_blackpad_3d(
             image,
             target,
-            prob=cfg["blackpad_prob"],
+            prob=cfg["prob_blackpad"],
             pad_ratio_range=cfg["blackpad_pad_ratio_range"],
         ),
     )
@@ -47,23 +47,23 @@ def apply_augmentation(img, label, augment=True):
         lambda image, target: random_contrast_3d(
             image,
             target,
-            prob=1.0,
+            prob=cfg["prob_contrast"],
             contrast_range=cfg["contrast_range"],
             brightness_range=cfg["brightness_range"],
             gamma_log2_range=cfg["gamma_log2_range"],
         ),
-        lambda image, target: random_gaussian_noise(image, target, prob=1.0, std=cfg["gaussian_noise_std"]),
-        lambda image, target: random_section_intensity_shift(image, target, prob=1.0, std=cfg["section_intensity_shift_std"]),
-        lambda image, target: random_block_3d(image, target, prob=cfg["block_prob"], shift=cfg["block_shift"]),
+        lambda image, target: random_gaussian_noise(image, target, prob=cfg["prob_gaussian_noise"], std=cfg["gaussian_noise_std"]),
+        lambda image, target: random_section_intensity_shift(image, target, prob=cfg["prob_section_intensity_shift"], std=cfg["section_intensity_shift_std"]),
+        lambda image, target: random_block_3d(image, target, prob=cfg["prob_block"], shift=cfg["block_shift"]),
     )
     
     artifact_ops = (
-        lambda image, target: random_darkline_3d(image, target, prob=1.0, width_range=cfg["darkline_width_range"]),
-        lambda image, target: random_missing_section(image, target, prob=1.0, max_missing=cfg["missing_section_max"]),
+        lambda image, target: random_darkline_3d(image, target, prob=cfg["prob_darkline"], width_range=cfg["darkline_width_range"]),
+        lambda image, target: random_missing_section(image, target, prob=cfg["prob_missing_section"], max_missing=cfg["missing_section_max"]),
         lambda image, target: random_elastic_deformation_3d(
             image,
             target,
-            prob=1.0,
+            prob=cfg["prob_elastic"],
             alpha=cfg["elastic_alpha"],
             sigma=cfg["elastic_sigma"],
         ),

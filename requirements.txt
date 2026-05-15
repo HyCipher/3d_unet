@@ -1,0 +1,8 @@
+numpy
+scipy
+matplotlib
+tifffile
+torch
+torchvision
+wandb
+onnxruntime

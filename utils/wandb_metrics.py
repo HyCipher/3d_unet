@@ -21,12 +21,14 @@ def log_validation_to_wandb(train_metrics, val_metrics, epoch):
         "train_precision": train_metrics.get("precision"),
         "train_recall": train_metrics.get("recall"),
         "train_specificity": train_metrics.get("specificity"),
+        "train_accuracy": train_metrics.get("accuracy"),
         "val_dice": val_metrics["dice"],
         "val_iou": val_metrics["iou"],
         "val_f1": val_metrics["f1"],
         "val_precision": val_metrics["precision"],
         "val_recall": val_metrics["recall"],
         "val_specificity": val_metrics["specificity"],
+        "val_accuracy": val_metrics["accuracy"],
     }
     if "loss" in val_metrics:
         payload["val_loss"] = val_metrics["loss"]

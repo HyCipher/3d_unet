@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 
+from evaluation.postprocessing import remove_small_connected_components
+
 
 def gen_starts(length, patch, stride):
     if length <= patch:
@@ -18,6 +20,7 @@ def sliding_window_inference(
     patch_size=(16, 512, 512),
     stride=(8, 256, 256),
     threshold=0.5,
+    dust_remove_min_size=0,
     device="cuda",
     criterion=None,
 ):
@@ -56,5 +59,6 @@ def sliding_window_inference(
 
     output /= np.maximum(count_map, 1e-8)
     pred_seg = (output > threshold).astype(np.uint8)
+    pred_seg = remove_small_connected_components(pred_seg, min_size=dust_remove_min_size)
     avg_loss = float(np.mean(patch_losses)) if patch_losses else None
     return output, pred_seg, avg_loss

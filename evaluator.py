@@ -35,6 +35,7 @@ def evaluate_model(
     patch_size=VAL_CONFIG["patch_size"],
     stride=VAL_CONFIG["stride"],
     threshold=VAL_CONFIG["threshold"],
+    dust_remove_min_size=VAL_CONFIG["dust_remove_min_size"],
     loss_type=VAL_CONFIG["loss_type"],
     save_results=VAL_CONFIG["save_results"],
     wandb_run=None,
@@ -58,6 +59,7 @@ def evaluate_model(
     precision_list = []
     recall_list = []
     specificity_list = []
+    accuracy_list = []
     loss_list = []
     sample_rows = []
     curve_true = []
@@ -80,6 +82,7 @@ def evaluate_model(
             patch_size=patch_size,
             stride=stride,
             threshold=threshold,
+            dust_remove_min_size=dust_remove_min_size,
             device=device,
             criterion=criterion,
         )
@@ -89,7 +92,7 @@ def evaluate_model(
         dice = dice_coefficient(pred_seg, gt_seg)
         iou = iou_score(pred_seg, gt_seg)
 
-        precision, recall, f1, specificity = precision_recall_f1_specificity(pred_seg, gt_seg)
+        precision, recall, f1, specificity, accuracy = precision_recall_f1_specificity(pred_seg, gt_seg)
 
         dice_list.append(dice)
         iou_list.append(iou)
@@ -97,6 +100,7 @@ def evaluate_model(
         precision_list.append(precision)
         recall_list.append(recall)
         specificity_list.append(specificity)
+        accuracy_list.append(accuracy)
 
         if sample_loss is not None:
             loss_list.append(sample_loss)
@@ -129,6 +133,7 @@ def evaluate_model(
             "precision": float(precision),
             "recall": float(recall),
             "specificity": float(specificity),
+            "accuracy": float(accuracy),
             "loss": float(sample_loss) if sample_loss is not None else None,
         }
         sample_rows.append(
@@ -141,6 +146,7 @@ def evaluate_model(
                 "precision": sample_metrics["precision"],
                 "recall": sample_metrics["recall"],
                 "specificity": sample_metrics["specificity"],
+                "accuracy": sample_metrics["accuracy"],
                 "loss": sample_metrics["loss"],
                 "sample_image": sample_image,
             }
@@ -161,6 +167,7 @@ def evaluate_model(
         "precision": float(np.mean(precision_list)),
         "recall": float(np.mean(recall_list)),
         "specificity": float(np.mean(specificity_list)),
+        "accuracy": float(np.mean(accuracy_list)),
     }
     if loss_list:
         summary["loss"] = float(np.mean(loss_list))
@@ -181,6 +188,7 @@ def main():
     patch_size = tuple(config["patch_size"])
     stride = tuple(config["stride"])
     threshold = config["threshold"]
+    dust_remove_min_size = config["dust_remove_min_size"]
     save_results = config["save_results"]
     
     # wandb config
@@ -201,10 +209,12 @@ def main():
                 "patch_size": patch_size,
                 "stride": stride,
                 "threshold": threshold,
+                "dust_remove_min_size": dust_remove_min_size,
                 "loss_type": loss_type,
                 "save_results": save_results,
             },
             job_type="validation",
+            # settings=wandb.Settings(silent=True, console="off"),
         )
 
     try:
@@ -215,6 +225,7 @@ def main():
             patch_size=patch_size,
             stride=stride,
             threshold=threshold,
+            dust_remove_min_size=dust_remove_min_size,
             loss_type=loss_type,
             save_results=save_results,
             wandb_run=wandb_run,
@@ -227,6 +238,7 @@ def main():
         print(f"Precision: {summary['precision']:.4f}")
         print(f"Recall: {summary['recall']:.4f}")
         print(f"Specificity: {summary['specificity']:.4f}")
+        print(f"Accuracy: {summary['accuracy']:.4f}")
         if "loss" in summary:
             print(f"Validation Loss: {summary['loss']:.4f}")
 

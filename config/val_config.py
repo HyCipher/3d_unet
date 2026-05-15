@@ -1,16 +1,16 @@
 def get_validation_config():
     """Centralized defaults for standalone validation runs."""
     return {
-        "model_path": "./model_results/run_20260420_150612/unet_3d_best.pth",
+        "model_path": "./model_results/run_20260512_224317/unet_3d_best.pth",
         "val_img_dir": "data/validation/images",
         "val_label_dir": "data/validation/labels",
         "patch_size": (8, 512, 512),
         "stride": (4, 256, 256),
         "threshold": 0.1,
+        "dust_remove_min_size": 128,
         "loss_type": "bce",  # "bce" | "focal" | "dicefocal"
         "save_results": True,   # Save pred/prob tif files to validation_results
         "wandb": True,          # Use Weights & Biases for logging
         "wandb_project": "c_elegans_3d_unet_validation",
-        "wandb_run_name": f"run_20260420_150612",
+        "wandb_run_name": f"run_20260512_224317(dust_remove_{128})",
     }
-    

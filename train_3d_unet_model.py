@@ -1,7 +1,7 @@
 import os
 import torch
 from torch.utils.data import DataLoader
-from config.tra_config import tra_val_hyper
+from config.tra_config import tra_hyper
 from losses import build_criterion
 from validate.evaluators import (  
     evaluate_with_optional_limit,
@@ -60,7 +60,7 @@ def train():
     )
 
     model, lr, loaded_pretrained = init_model_and_lr(device)
-    controls = tra_val_hyper()
+    controls = tra_hyper()
 
     # Compute pos_weight from training labels to handle class imbalance in BCE.
     # Raw ratio (neg/pos) is very large for this dataset, so cap it for stability.
@@ -100,7 +100,7 @@ def train():
     # Initialize wandb run before training loop
     wandb_config = build_wandb_config(loader, lr, controls)
     wandb_config.update(build_aug_wandb_config())
-    init_wandb_run(project="c_elegans_3d_unet", config=wandb_config)
+    run_name = init_wandb_run(project=wandb_config["project"], config=wandb_config)
     
     try:
         for epoch in range(controls["num_epochs"]):
@@ -148,21 +148,22 @@ def train():
                 print(f"Scheduler updated by validation Dice; next LR: {optimizer.param_groups[0]['lr']:.2e}")
 
                 # Save periodic epoch checkpoint and best model by validation Dice
-                os.makedirs("./model_results", exist_ok=True)
-                model_path = f"./model_results/unet_3d_epoch_{epoch + 1}.pth"
+                os.makedirs(f"./model_results/{run_name}", exist_ok=True)
+                model_path = f"./model_results/{run_name}/unet_3d_epoch_{epoch + 1}.pth"
                 torch.save(model.state_dict(), model_path)
                 print(f"Model saved: {model_path}")
 
 
                 # Save best model
-                best_val_dice = save_best_model(model, val_metrics, best_val_dice, sample_input)
+                best_val_dice = save_best_model(model, val_metrics, best_val_dice, sample_input, run_name)
                 
         finish_wandb_run()
 
     except KeyboardInterrupt:
         print("Training interrupted by user.")
-        torch.save(model.state_dict(), "./model_results/unet_3d_interrupted.pth")
-        print("Model saved as: unet_3d_interrupted.pth")
+        os.makedirs(f"./model_results/{run_name}", exist_ok=True)
+        torch.save(model.state_dict(), f"./model_results/{run_name}/unet_3d_interrupted.pth")
+        print(f"Model saved as: ./model_results/{run_name}/unet_3d_interrupted.pth")
         finish_wandb_run()
 
 

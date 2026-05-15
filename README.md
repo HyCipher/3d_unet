@@ -2,6 +2,20 @@
 
 This document explains how to use the training, validation, and plotting scripts in this project.
 
+## 0. Install dependencies
+
+Create or activate your Python environment first, then install the project dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+If you plan to use wandb logging, log in once after installation:
+
+```bash
+wandb login
+```
+
 ## 1. Train the model
 
 ```bash

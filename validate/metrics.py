@@ -15,7 +15,7 @@ def iou_score(pred, gt, smooth=1e-6):
 
 
 def precision_recall_f1_specificity(pred_seg, gt_seg, smooth=1e-6):
-    """根据二值分割结果计算 Precision/Recall/F1/Specificity。"""
+    """根据二值分割结果计算 Precision/Recall/F1/Specificity/Accuracy。"""
     tp = np.sum(pred_seg * gt_seg)
     fp = np.sum(pred_seg * (1 - gt_seg))
     fn = np.sum((1 - pred_seg) * gt_seg)
@@ -25,5 +25,6 @@ def precision_recall_f1_specificity(pred_seg, gt_seg, smooth=1e-6):
     recall = tp / (tp + fn + smooth)
     f1 = 2 * precision * recall / (precision + recall + smooth)
     specificity = tn / (tn + fp + smooth)
+    accuracy = (tp + tn) / (tp + tn + fp + fn + smooth)
 
-    return precision, recall, f1, specificity
+    return precision, recall, f1, specificity, accuracy
