@@ -25,42 +25,42 @@ from training import *
 # =========================
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    controls = tra_hyper()
 
     dataset = Tif3DPatchDataset(
-        img_dir="data/training/images",
-        label_dir="data/training/labels",
-        patch_size=(8, 512, 512),
-        patches_per_volume=500,
+        img_dir=controls["train_img_dir"],
+        label_dir=controls["train_label_dir"],
+        patch_size=controls["patch_size"],
+        patches_per_volume=controls["patches_per_volume"],
         augment=True,
     )
 
     loader = DataLoader(
         dataset,
-        batch_size=2,
+        batch_size=controls["batch_size"],
         shuffle=True,
-        num_workers=4,
+        num_workers=controls["num_workers"],
         pin_memory=True,
         persistent_workers=True,
     )
 
     val_dataset = Tif3DPatchDataset(
-        img_dir="data/validation/images",
-        label_dir="data/validation/labels",
-        patch_size=(8, 512, 512),
-        patches_per_volume=50,
+        img_dir=controls["val_img_dir"],
+        label_dir=controls["val_label_dir"],
+        patch_size=controls["patch_size"],
+        patches_per_volume=controls["val_patches_per_volume"],
         augment=False,
     )
 
     train_eval_dataset = Tif3DPatchDataset(
-        img_dir="data/training/images",
-        label_dir="data/training/labels",
-        patch_size=(8, 512, 512),
-        patches_per_volume=50,
+        img_dir=controls["train_img_dir"],
+        label_dir=controls["train_label_dir"],
+        patch_size=controls["patch_size"],
+        patches_per_volume=controls["val_patches_per_volume"],
         augment=False,
     )
 
     model, lr, loaded_pretrained = init_model_and_lr(device)
-    controls = tra_hyper()
 
     # Compute pos_weight from training labels to handle class imbalance in BCE.
     # Raw ratio (neg/pos) is very large for this dataset, so cap it for stability.
