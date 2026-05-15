@@ -1,6 +1,27 @@
 # 3D UNet Usage Guide
 
-This document explains how to use the training, validation, and plotting scripts in this project.
+This document explains how to use the training, evaluation, and inference scripts in this project.
+
+## Project structure
+
+```
+train_3d_unet_model.py       # Training entry point
+evaluator.py                 # Standalone evaluation (PyTorch)
+evaluator_onnx.py            # Standalone evaluation (ONNX)
+auto_train_then_evaluate.py  # Train then auto-evaluate in one command
+infer.py                     # Inference on new volumes (no labels required)
+config/
+  tra_config.py              # Training hyperparameters
+  val_config.py              # Validation/evaluation defaults
+augmentations/               # Data augmentation modules
+dataset/                     # Dataset / dataloader
+evaluation/                  # Inference, I/O, postprocessing, PR curves
+losses/                      # Loss functions (BCE, Focal, DiceFocal)
+models/                      # UNet architecture
+training/                    # Training loop helpers
+utils/                       # wandb logging utilities
+validate/                    # Metrics, evaluators, reporting
+```
 
 ## 0. Install dependencies
 
@@ -19,183 +40,189 @@ wandb login
 ## 1. Train the model
 
 ```bash
-python train_3d_unet.py
+python train_3d_unet_model.py
 ```
+
+All training hyperparameters are centralized in `config/tra_config.py`:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `num_epochs` | 50 | Total training epochs |
+| `loss_type` | `bce` | `bce` / `focal` / `dicefocal` |
+| `dice_weight` | 0.8 | Weight for Dice term (dicefocal only) |
+| `focal_weight` | 1.0 | Weight for Focal term (dicefocal only) |
+| `val_patch_size` | `(8, 512, 512)` | Patch size used during in-training validation |
+| `val_stride` | `(4, 256, 256)` | Stride used during in-training validation |
+| `val_threshold` | 0.1 | Binarization threshold for in-training validation |
+| `validate_every` | 10 | Validate every N epochs |
+| `max_val_volumes` | `None` | Limit volumes validated per run (set integer for speed) |
+| `dust_remove_min_size` | 64 | Remove connected components smaller than this (voxels) |
+| `pos_weight_cap` | 10.0 | Cap on BCE pos_weight to prevent instability |
+| `grad_clip_norm` | 1.0 | Gradient clipping threshold |
+| `disable_aug_last_epochs` | 8 | Disable augmentation in the final N epochs |
+| `eval_train_set` | `False` | Also evaluate training set each validation step |
 
 The training script will:
 
-- Save model checkpoints in `models/`
-- Use `DiceFocalLoss(alpha=0.25, gamma=2.0, dice_weight=0.8, focal_weight=1.0)` by default
-- Use `Adam(lr=1e-4)` and `ReduceLROnPlateau` driven by validation Dice
-- Save `./models/unet_3d_best.pth` based on the best validation Dice
-- Automatically record training loss in `training_loss*.json`
-- Automatically record validation metrics in `validation_history*.json`
-- Use timestamped JSON filenames when the default files already exist (to avoid overwriting)
+- Save the best checkpoint as `./model_results/run_<timestamp>/unet_3d_best.pth` (selected by validation Dice)
+- Use `Adam` + `ReduceLROnPlateau(mode=max, factor=0.5, patience=3, min_lr=1e-6)`
+- Auto-compute `pos_weight` from training labels (capped by `pos_weight_cap`)
 
-Current validation behavior inside training:
+## 2. Evaluate a model (PyTorch)
 
-- Validate every 10 epochs
-- Also run validation at epoch 1 when training from scratch
-- By default only validate the first validation volume during training for speed (`MAX_VAL_VOLUMES = 1` in `train_3d_unet.py`)
-- Use validation patch size `16 512 512` and stride `8 256 256`
+All evaluation defaults are centralized in `config/val_config.py`. Edit that file to set the
+model path, patch size, threshold, and wandb settings, then simply run:
 
-If you want more stable validation curves during training, edit `train_3d_unet.py` and set:
+```bash
+python evaluator.py
+```
+
+`evaluator.py` will:
+
+- Run sliding-window inference on all validation volumes
+- Compute Dice / IoU / F1 / Precision / Recall / Specificity / Accuracy per sample and as mean
+- Optionally upload metrics, per-sample visualizations, PR/ROC curves, and summary tables to wandb
+- Save prediction and probability `.tif` files to `validation_results/` when `save_results = True`
+
+Key fields in `config/val_config.py`:
+
+| Field | Default | Description |
+|---|---|---|
+| `model_path` | `./model_results/run_.../unet_3d_best.pth` | Checkpoint to evaluate |
+| `patch_size` | `(8, 512, 512)` | Sliding-window patch size |
+| `stride` | `(4, 256, 256)` | Sliding-window stride |
+| `threshold` | 0.1 | Binarization threshold |
+| `dust_remove_min_size` | 128 | Remove small components (voxels) |
+| `loss_type` | `bce` | `bce` / `focal` / `dicefocal` / `none` |
+| `save_results` | `True` | Save pred/prob tif files |
+| `wandb` | `True` | Enable wandb logging |
+| `wandb_project` | `c_elegans_3d_unet_validation` | wandb project name |
+| `wandb_run_name` | _(set in config)_ | wandb run name |
+
+## 3. Evaluate a model (ONNX)
+
+```bash
+python evaluator_onnx.py
+```
+
+Uses the same `config/val_config.py` defaults. Replace `model_path` with a `.onnx` file path.
+Runs on CPU by default; switches to CUDA if `onnxruntime-gpu` is installed and a GPU is detected.
+
+## 4. Train then auto-evaluate in one command
+
+```bash
+python auto_train_then_evaluate.py
+```
+
+This runs Step 1 (training) and immediately Step 2 (evaluation of the best checkpoint) using
+the defaults in `config/val_config.py`. Optional CLI overrides:
+
+```bash
+python auto_train_then_evaluate.py \
+  --model-path ./model_results/run_XYZ/unet_3d_best.pth \
+  --threshold 0.1 \
+  --loss-type bce \
+  --save-results \
+  --eval-wandb
+```
+
+| Flag | Description |
+|---|---|
+| `--model-path` | Explicit checkpoint; if omitted uses latest `run_*/unet_3d_best.pth` |
+| `--val-img-dir` | Override validation image directory |
+| `--val-label-dir` | Override validation label directory |
+| `--threshold` | Override binarization threshold |
+| `--loss-type` | Override loss type for validation loss calculation |
+| `--save-results` / `--no-save-results` | Toggle saving tif outputs |
+| `--eval-wandb` / `--no-eval-wandb` | Toggle wandb logging for the eval stage |
+
+## 5. Inference on new volumes (no labels)
+
+Edit the `__main__` block in `infer.py` to set your paths, then:
+
+```bash
+python infer.py
+```
+
+Outputs:
+- `result_seg.tif`: binary segmentation (uint8, values 0/255, shape H×W×Z)
+- `prob_map.tif`: probability map (float32, shape H×W×Z)
+
+Key parameters inside `infer.py`:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `patch_size` | `(16, 512, 512)` | Patch size for sliding-window inference |
+| `stride` | `(4, 128, 128)` | Stride for sliding-window inference |
+| `threshold` | 0.1 | Binarization threshold |
+
+## 6. Evaluation output files
+
+| File | Description |
+|---|---|
+| `validation_results/pred_*.tif` | Binary predictions (uint8) |
+| `validation_results/prob_*.tif` | Probability maps (float32) |
+
+When `wandb = True`, `evaluator.py` also uploads:
+
+- Per-sample metrics table
+- Center-slice images (original / label / prediction / probability) per sample
+- PR curve, ROC curve, and F1-threshold curve
+- Dataset-level mean metrics summary table
+
+## 7. Common issues
+
+### 7.1 GPU out of memory
+
+Reduce patch size and stride in `config/val_config.py` (or `config/tra_config.py` for training):
 
 ```python
-MAX_VAL_VOLUMES = None
+"patch_size": (8, 256, 256),
+"stride":     (4, 128, 128),
 ```
 
-This will validate all volumes, but training will be slower.
+### 7.2 Need higher Recall
 
-## 2. Evaluate a single model
+Lower the threshold in `config/val_config.py`:
 
-Simplest command (uses default arguments):
-
-```bash
-python validate.py
+```python
+"threshold": 0.05,
 ```
 
-Default model path:
-
-- `./models/unet_3d_best.pth`
-
-Common custom example:
-
-```bash
-python validate.py \
-  --model ./models/Focal_Dice_100/unet_3d_best.pth \
-  --val-img-dir data/validation/images \
-  --val-label-dir data/validation/labels \
-  --patch-size 16 512 512 \
-  --stride 8 256 256 \
-  --threshold 0.5 \
-  --loss-type dicefocal \
-  --plot-curves
-```
-
-Enable wandb upload (metrics + validation slice images):
-
-```bash
-python validate.py --wandb
-```
-
-Example with explicit wandb settings:
-
-```bash
-python validate.py \
-  --model ./models/unet_3d_best.pth \
-  --plot-curves \
-  --wandb \
-  --wandb-project c_elegans_3d_unet_validation \
-  --wandb-run-name validate_unet_3d_best
-```
-
-Optional arguments:
-
-- `--loss-type`: `none` / `bce` / `focal` / `dicefocal`
-- `--save-results` or `--no-save-results`
-- `--visualize` or `--no-visualize`
-- `--plot-curves`
-- `--wandb`: upload validation metrics and images to wandb
-- `--wandb-project`: wandb project name (default: `c_elegans_3d_unet_validation`)
-- `--wandb-run-name`: optional run name (default: `validate_<model_name>`)
-
-Notes:
-
-- `validate.py` can compute validation loss with `bce`, `focal`, or `dicefocal`, but model selection during training is based on validation Dice, not validation loss
-- `Dice+Focal` loss is usually less smooth than BCE, so validation loss may plateau or fluctuate even when Dice is still improving
-
-## 3. Validation output files
-
-After running `validate.py`, the script usually generates:
-
-- `validation_report_<model_name>.txt`: validation summary report
-- `validation_results/pred_*.tif`: binary prediction files
-- `validation_results/prob_*.tif`: probability maps
-- `validation_visualization.png`: 6-panel visualization (image, label, prediction, probability map, label overlay, prediction overlay)
-- `validation_curves_<model_name>.png`: PR/ROC curves (only when `--plot-curves` is enabled)
-
-When `--wandb` is enabled, `validate.py` also uploads:
-
-- Per-sample metrics
-- Center-slice images for each sample (original / label / prediction / probability)
-- Summary PNGs (`validation_visualization.png` and PR/ROC curves if generated)
-- Dataset-level mean validation metrics
-
-## 4. Plot training/validation curves
-
-```bash
-python plot_validation.py loss
-python plot_validation.py losscompare
-python plot_validation.py allmetrics
-python plot_validation.py table
-
-```
-
-Mode descriptions:
-
-- `loss`: training loss curve
-- `losscompare`: training loss vs validation loss
-- `allmetrics`: Dice/IoU/F1/Precision/Recall/Specificity curves
-- `table`: read summary table from `validation_report.txt`
-
-Interpretation note:
-
-- `losscompare` mixes training patch loss and validation-time sliding-window patch loss; for checkpoint selection, prefer Dice/IoU/F1 over loss alone
-
-If your report file is named `validation_report_<model_name>.txt`, copy it first:
-
-```bash
-cp validation_report_unet_3d_best.txt validation_report.txt
-python plot_validation.py table
-```
-
-## 5. Common issues
-
-### 5.1 GPU out of memory
-
-Use smaller patch size and stride:
-
-```bash
-python validate.py --patch-size 8 256 256 --stride 4 128 128
-```
-
-### 5.2 Need higher Recall
-
-Lower the threshold:
-
-```bash
-python validate.py --threshold 0.3
-```
-
-### 5.3 Need higher Precision
+### 7.3 Need higher Precision
 
 Raise the threshold:
 
-```bash
-python validate.py --threshold 0.7
+```python
+"threshold": 0.3,
 ```
 
-### 5.4 Validation loss does not keep decreasing with Dice+Focal
+### 7.4 Noisy validation curves during training
 
-This is common and does not automatically mean training failed.
+Set `max_val_volumes` to `None` in `config/tra_config.py` to validate all volumes (slower but more stable).
+Also consider increasing `validate_every` if validation is too frequent.
 
-Check these points first:
-
-- Look at validation Dice/IoU/F1, not validation loss alone
-- If training uses `MAX_VAL_VOLUMES = 1`, validation curves can be noisy; use `None` for full validation
-- Dice+Focal is more sensitive to learning rate than BCE; if needed, reduce the initial LR from `1e-4` to `3e-5`
-- Validation loss is averaged over sliding-window patches, while Dice is computed on the reconstructed full volume, so they are related but not identical objectives
-
-### 5.5 wandb logging checklist
+### 7.5 wandb logging checklist
 
 - Install `wandb` and run `wandb login` once
-- Run validation with `--wandb`
+- Set `"wandb": True` in `config/val_config.py`
 - If run creation fails in restricted environments, set `WANDB_MODE=offline` and sync later
 
-## 6. Dependencies
+## 8. Dependencies
+
+```
+numpy
+scipy
+matplotlib
+tifffile
+torch
+torchvision
+wandb
+onnxruntime
+```
+
+Install all at once:
 
 ```bash
-pip install torch torchvision
-pip install scikit-learn scipy numpy matplotlib tifffile wandb
+pip install -r requirements.txt
 ```
