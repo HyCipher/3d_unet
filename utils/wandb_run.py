@@ -35,7 +35,7 @@ def init_wandb_run(project, config):
         project=project,
         name=run_name,
         config=config,
-        settings=wandb.Settings(silent=True, console="off"),
+        # settings=wandb.Settings(silent=True, console="off"),
     )
     return run_name
 

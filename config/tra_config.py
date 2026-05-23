@@ -7,7 +7,7 @@ def tra_hyper():
         "train_label_dir": "data/training/labels",
         "val_img_dir": "data/validation/images",
         "val_label_dir": "data/validation/labels",
-        "patch_size": (8, 512, 512),
+        "patch_size": (4, 1024, 1024),
         "patches_per_volume": 500,
         "val_patches_per_volume": 50,
         "batch_size": 2,
@@ -17,7 +17,7 @@ def tra_hyper():
         "val_patch_size": (8, 512, 512),
         "val_stride": (4, 256, 256),
         "val_threshold": 0.1,
-        "dust_remove_min_size": 64,
+        "dust_remove_min_size": 128,
         "loss_type": "bce",  # "bce" | "focal" | "dicefocal"
         "validate_every": 10,
         "eval_train_set": False, # Set to True to evaluate training set each epoch (slows down training)

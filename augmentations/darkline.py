@@ -2,18 +2,8 @@ import numpy as np
 
 
 def random_darkline_3d(img, label, prob=0.2, width_range=(10, 20)):
-    """随机暗带增强（仅作用于图像，不改变标签）。
-
-    沿 Y 轴或 X 轴随机选取一条带状区域，对其施加亮度衰减，结果 clip 到 [0, 1]。
-
-    Args:
-        img         (np.ndarray): 图像数组，shape 为 (Z, Y, X)。
-        label       (np.ndarray): 标签数组，shape 为 (Z, Y, X)，不做修改。
-        prob        (float): 触发增强的概率。
-        width_range (tuple): 暗带宽度的随机范围（像素）。
-
-    Returns:
-        img, label (np.ndarray, np.ndarray)
+    """
+    随机暗带增强（仅作用于图像，不改变标签）。
     """
     if np.random.rand() >= prob:
         return img, label

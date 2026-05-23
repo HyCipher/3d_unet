@@ -16,7 +16,16 @@ class Tif3DPatchDataset(Dataset):
         - label_dir: Directory containing 3D TIFF label volumes (uint8), same shape as images.
     Each __getitem__ returns a randomly cropped 3D patch (image and label) with optional augmentation.
     """
-    def __init__(self, img_dir, label_dir, patch_size=(4, 128, 128), patches_per_volume=200, augment=True):
+    def __init__(
+        self,
+        img_dir,
+        label_dir,
+        patch_size=(4, 128, 128),
+        patches_per_volume=200,
+        augment=True,
+        pos_sample_ratio=0.4,
+        edge_sample_ratio=0.1,
+    ):
         self.img_paths = sorted(glob.glob(os.path.join(img_dir, "*.tif")))
         self.label_paths = sorted(glob.glob(os.path.join(label_dir, "*.tif")))
         assert len(self.img_paths) == len(self.label_paths)
@@ -41,15 +50,39 @@ class Tif3DPatchDataset(Dataset):
 
         self.num_volumes = len(self.volumes)
         self.patches_per_volume = patches_per_volume
+        self.pos_sample_ratio = float(pos_sample_ratio)
+        self.edge_sample_ratio = float(edge_sample_ratio)
+
+        if self.pos_sample_ratio < 0.0 or self.edge_sample_ratio < 0.0:
+            raise ValueError("Sampling ratios must be non-negative.")
+        if self.pos_sample_ratio + self.edge_sample_ratio > 1.0:
+            raise ValueError("pos_sample_ratio + edge_sample_ratio must be <= 1.0.")
 
         # Cache positive coordinates to avoid scanning the full volume every __getitem__ call.
         self.pos_coords = []
+        self.edge_coords = []
         for lab in self.labels:
-            coords = np.argwhere(lab > 0)
-            self.pos_coords.append(coords)
+            pos_mask = lab > 0
+            self.pos_coords.append(np.argwhere(pos_mask))
+
+            # Edge voxels are positive voxels that touch background in 6-neighborhood.
+            p = np.pad(pos_mask, 1, mode="constant", constant_values=False)
+            c = p[1:-1, 1:-1, 1:-1]
+            interior = (
+                c
+                & p[:-2, 1:-1, 1:-1]
+                & p[2:, 1:-1, 1:-1]
+                & p[1:-1, :-2, 1:-1]
+                & p[1:-1, 2:, 1:-1]
+                & p[1:-1, 1:-1, :-2]
+                & p[1:-1, 1:-1, 2:]
+            )
+            edge_mask = c & (~interior)
+            self.edge_coords.append(np.argwhere(edge_mask))
         print(
             f"Dataset: {self.num_volumes} volumes, "
-            f"pos coords cached: {[len(c) for c in self.pos_coords]}"
+            f"pos coords cached: {[len(c) for c in self.pos_coords]}, "
+            f"edge coords cached: {[len(c) for c in self.edge_coords]}"
         )
 
     def __len__(self):
@@ -63,18 +96,20 @@ class Tif3DPatchDataset(Dataset):
         d, h, w = vol.shape
         pd, ph, pw = self.patch_size
 
-        # Random crop 3D patch
-        if np.random.rand() < 0.8:
-            pos = self.pos_coords[vid]
-            if len(pos) > 0:
-                zc, yc, xc = pos[np.random.randint(len(pos))]
-                z = np.clip(zc - pd // 2, 0, d - pd)
-                y = np.clip(yc - ph // 2, 0, h - ph)
-                x = np.clip(xc - pw // 2, 0, w - pw)
-            else:
-                z = np.random.randint(0, d - pd + 1)
-                y = np.random.randint(0, h - ph + 1)
-                x = np.random.randint(0, w - pw + 1)
+        # Random crop policy: positive-centered, edge-centered, or fully random.
+        r = np.random.rand()
+        if r < self.pos_sample_ratio:
+            coords = self.pos_coords[vid]
+        elif r < (self.pos_sample_ratio + self.edge_sample_ratio):
+            coords = self.edge_coords[vid]
+        else:
+            coords = None
+
+        if coords is not None and len(coords) > 0:
+            zc, yc, xc = coords[np.random.randint(len(coords))]
+            z = np.clip(zc - pd // 2, 0, d - pd)
+            y = np.clip(yc - ph // 2, 0, h - ph)
+            x = np.clip(xc - pw // 2, 0, w - pw)
         else:
             z = np.random.randint(0, d - pd + 1)
             y = np.random.randint(0, h - ph + 1)

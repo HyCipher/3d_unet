@@ -7,13 +7,13 @@ def get_aug_config():
         # ── group-level probabilities ──────────────────────────────────────
         "prob_geometric": 0.8,
         "prob_intensity": 0.8,
-        "prob_artifact": 0.2,
+        "prob_artifact": 0,
 
         # ── geometric ops ─────────────────────────────────────────────────
         "translate_min_shift": (0, 1, 1),
         "translate_max_shift": (0, 3, 3),
         "blackpad_pad_ratio_range": (0.4, 0.9),
-        "prob_blackpad": 0.15,
+        "prob_blackpad": 0,
         "prob_flip": 1.0,
         "prob_rotation_90": 1.0,
         "prob_translate": 1.0,
@@ -21,13 +21,13 @@ def get_aug_config():
         # ── intensity ops ─────────────────────────────────────────────────
         "prob_contrast": 1.0,
         "contrast_range": (0.8, 1.2),
-        "brightness_range": (-0.08, 0.08),
+        "brightness_range": (-0.1, 0.1),
         "gamma_log2_range": (-0.2, 0.2),
         "prob_gaussian_noise": 1.0,
         "gaussian_noise_std": 0.05,
-        "prob_section_intensity_shift": 1.0,
+        "prob_section_intensity_shift": 0,
         "section_intensity_shift_std": 0.05,
-        "prob_block": 0.5,
+        "prob_block": 0,
         "block_shift": 10,
 
         # ── artifact ops ──────────────────────────────────────────────────

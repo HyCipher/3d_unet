@@ -35,16 +35,8 @@ def random_blackpad_3d(img, label, prob=0.25, pad_ratio_range=(0.4, 0.9)):
 
 
 def _blackpad(arr, d=0, n=100):
-    """将数组沿指定方向平移 n 个像素，空白处填零。
-
-    Args:
-        arr (np.ndarray): shape (Z, Y, X)。
-        d   (int): 方向 — 0: Y 正方向, 1: Y 负方向,
-                           2: X 正方向, 3: X 负方向。
-        n   (int): 平移像素数。
-
-    Returns:
-        np.ndarray
+    """
+    将数组沿指定方向平移 n 个像素，空白处填零。
     """
     out = np.zeros(arr.shape, dtype="float32")
 

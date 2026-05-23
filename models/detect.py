@@ -47,8 +47,11 @@ class ConvBlock3(nn.Module):
 		super(ConvBlock3, self).__init__()
 		self.conv1 = conv3x3x3(in_channels, out_channels)
 		self.conv2 = conv3x3x3(out_channels, out_channels)
-		self.norm1 = nn.BatchNorm3d(out_channels)
-		self.norm2 = nn.BatchNorm3d(out_channels)
+		# self.norm1 = nn.BatchNorm3d(out_channels)
+		# self.norm2 = nn.BatchNorm3d(out_channels)
+		self.norm1 = nn.InstanceNorm3d(out_channels, affine=True)
+		self.norm2 = nn.InstanceNorm3d(out_channels, affine=True)
+  
   
 	def forward(self, x):
      

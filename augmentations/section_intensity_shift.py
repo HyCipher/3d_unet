@@ -2,20 +2,8 @@ import numpy as np
 
 
 def random_section_intensity_shift(img, label, prob=0.4, std=0.1):
-    """模拟逐切片染色/焦距漂移伪影。
-
-    在 serial-section EM 中，每张切片的染色程度和电子束焦距可能略有不同，
-    导致相邻切片之间存在全局亮度偏移。此增强为每个 Z 切片独立施加随机的
-    亮度偏移（加法）和对比度缩放（乘法），模拟真实采集条件。
-
-    Args:
-        img   (np.ndarray): 图像数组，shape 为 (Z, Y, X)，z-scored 归一化后。
-        label (np.ndarray): 标签数组，shape 为 (Z, Y, X)，不做修改。
-        prob  (float): 触发概率。
-        std   (float): 亮度偏移的高斯标准差（相对于归一化后的数值范围）。
-
-    Returns:
-        img, label (np.ndarray, np.ndarray)
+    """
+    模拟逐切片染色/焦距漂移伪影。
     """
     if np.random.rand() >= prob:
         return img, label

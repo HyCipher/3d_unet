@@ -57,8 +57,8 @@ def infer_one_volume(
 # =========================
 if __name__ == "__main__":
     prob_map = infer_one_volume(
-        img_path="/BiO/Live/rooter/Downloads/C_elegans_UNet/3d_unet/data/validation/images/dauer_img_160_180.tif",
-        model_path="/BiO/Live/rooter/Downloads/C_elegans_UNet/3d_unet/models/unet_3d_epoch_50.pth",
+        img_path="/BiO/Live/rooter/Downloads/C_elegans_UNet/3d_unet/data/training/images",
+        model_path="/BiO/Live/rooter/Downloads/C_elegans_UNet/3d_unet/model_results/run_20260515_130430/unet_3d_best.pth",
         save_path="result_seg.tif",
         patch_size=(16, 512, 512),
         stride=(4, 128, 128),

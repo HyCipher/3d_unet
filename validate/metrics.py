@@ -22,7 +22,7 @@ def precision_recall_f1_specificity(pred_seg, gt_seg, smooth=1e-6):
     tn = np.sum((1 - pred_seg) * (1 - gt_seg))
 
     precision = tp / (tp + fp + smooth)
-    recall = tp / (tp + fn + smooth)
+    recall = tp / (tp + fn + smooth) # sensitivity
     f1 = 2 * precision * recall / (precision + recall + smooth)
     specificity = tn / (tn + fp + smooth)
     accuracy = (tp + tn) / (tp + tn + fp + fn + smooth)

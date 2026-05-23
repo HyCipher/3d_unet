@@ -35,17 +35,8 @@ def _shift_with_padding(arr, dz, dy, dx):
 
 
 def random_translate_3d(img, label, prob=0.2, min_shift=(2, 2, 2), max_shift=(5, 5, 5)):
-    """随机平移增强，同时作用于图像和标签，保持尺寸不变。
-
-    Args:
-        img (np.ndarray): 图像数组，shape 为 (Z, Y, X)。
-        label (np.ndarray): 标签数组，shape 为 (Z, Y, X)。
-        prob (float): 触发增强的概率。
-        min_shift (tuple): Z/Y/X 三个轴的最小平移体素数（含）。
-        max_shift (tuple): Z/Y/X 三个轴的最大平移体素数（含）。
-
-    Returns:
-        img, label (np.ndarray, np.ndarray)
+    """
+    随机平移增强，同时作用于图像和标签，保持尺寸不变。
     """
     if np.random.rand() >= prob:
         return img, label

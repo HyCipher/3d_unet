@@ -1,7 +1,36 @@
 import numpy as np
 import torch
+from scipy import ndimage
 
 from evaluation.postprocessing import remove_small_connected_components
+
+
+def _log_cc_stats(pred_seg_before, pred_seg_after, threshold, dust_remove_min_size):
+    """Print connected-component statistics before and after dust removal."""
+    structure = ndimage.generate_binary_structure(3, 1)
+
+    labeled_before, n_before = ndimage.label(pred_seg_before, structure=structure)
+    sizes_before = np.bincount(labeled_before.ravel())[1:] if n_before > 0 else np.array([0])
+
+    labeled_after, n_after = ndimage.label(pred_seg_after, structure=structure)
+    sizes_after = np.bincount(labeled_after.ravel())[1:] if n_after > 0 else np.array([0])
+
+    fg_before = int(pred_seg_before.sum())
+    fg_after  = int(pred_seg_after.sum())
+
+    print(
+        f"[CC stats] threshold={threshold}  dust_min_size={dust_remove_min_size}\n"
+        f"  Before dust remove : {n_before:5d} components | "
+        f"fg voxels={fg_before:8d} | "
+        f"max={sizes_before.max() if n_before else 0:8d} | "
+        f"min={sizes_before.min() if n_before else 0:6d} | "
+        f"median={int(np.median(sizes_before)) if n_before else 0:8d}\n"
+        f"  After  dust remove : {n_after:5d} components | "
+        f"fg voxels={fg_after:8d} | "
+        f"max={sizes_after.max() if n_after else 0:8d} | "
+        f"min={sizes_after.min() if n_after else 0:6d} | "
+        f"median={int(np.median(sizes_after)) if n_after else 0:8d}"
+    )
 
 
 def gen_starts(length, patch, stride):
@@ -59,6 +88,7 @@ def sliding_window_inference(
 
     output /= np.maximum(count_map, 1e-8)
     pred_seg = (output > threshold).astype(np.uint8)
-    pred_seg = remove_small_connected_components(pred_seg, min_size=dust_remove_min_size)
+    pred_seg_after = remove_small_connected_components(pred_seg, min_size=dust_remove_min_size)
+    _log_cc_stats(pred_seg, pred_seg_after, threshold, dust_remove_min_size)
     avg_loss = float(np.mean(patch_losses)) if patch_losses else None
-    return output, pred_seg, avg_loss
+    return output, pred_seg_after, avg_loss

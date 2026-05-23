@@ -10,18 +10,8 @@ def random_contrast_3d(
     gamma_log2_range=(-1.0, 1.0),
 ):
     """
-        Randomly adjust contrast, brightness, and gamma of a 3D image.
-        
-        Args:
-            img: 3D input image (D, H, W)
-            label: 3D label (D, H, W), unchanged
-            prob: probability of applying this augmentation
-            contrast_range: range for random contrast scaling factor
-            brightness_range: range for random brightness offset
-            gamma_log2_range: range for random gamma in log2 space
-        Returns:
-            Augmented image and original label
-        """
+    Randomly adjust contrast, brightness, and gamma of a 3D image.
+    """
     if np.random.rand() < prob:
         a = np.random.uniform(contrast_range[0], contrast_range[1])
         b = np.random.uniform(brightness_range[0], brightness_range[1])
