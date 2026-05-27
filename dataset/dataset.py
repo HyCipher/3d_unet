@@ -5,6 +5,7 @@ import numpy as np
 import tifffile as tiff
 import torch
 from torch.utils.data import Dataset
+from scipy.ndimage import binary_erosion
 from augmentations.data_augmentation import apply_augmentation
 
 
@@ -25,6 +26,10 @@ class Tif3DPatchDataset(Dataset):
         augment=True,
         pos_sample_ratio=0.4,
         edge_sample_ratio=0.1,
+        hard_negative_dir=None,
+        hard_negative_sample_ratio=0.0,
+        hardest_negative=False,
+        hardest_negative_erosion_iters=1,
     ):
         self.img_paths = sorted(glob.glob(os.path.join(img_dir, "*.tif")))
         self.label_paths = sorted(glob.glob(os.path.join(label_dir, "*.tif")))
@@ -52,15 +57,41 @@ class Tif3DPatchDataset(Dataset):
         self.patches_per_volume = patches_per_volume
         self.pos_sample_ratio = float(pos_sample_ratio)
         self.edge_sample_ratio = float(edge_sample_ratio)
+        self.hard_negative_dir = hard_negative_dir
+        self.hard_negative_sample_ratio = float(hard_negative_sample_ratio)
+        self.hardest_negative = bool(hardest_negative)
+        self.hardest_negative_erosion_iters = int(hardest_negative_erosion_iters)
 
-        if self.pos_sample_ratio < 0.0 or self.edge_sample_ratio < 0.0:
+        if (
+            self.pos_sample_ratio < 0.0
+            or self.edge_sample_ratio < 0.0
+            or self.hard_negative_sample_ratio < 0.0
+        ):
             raise ValueError("Sampling ratios must be non-negative.")
-        if self.pos_sample_ratio + self.edge_sample_ratio > 1.0:
-            raise ValueError("pos_sample_ratio + edge_sample_ratio must be <= 1.0.")
+        if self.pos_sample_ratio + self.edge_sample_ratio + self.hard_negative_sample_ratio > 1.0:
+            raise ValueError(
+                "pos_sample_ratio + edge_sample_ratio + hard_negative_sample_ratio must be <= 1.0."
+            )
 
         # Cache positive coordinates to avoid scanning the full volume every __getitem__ call.
         self.pos_coords = []
         self.edge_coords = []
+        self.hard_negative_coords = []
+        self.hardest_negative_coords = []
+
+        if self.hard_negative_dir is not None:
+            hard_negative_paths = {
+                os.path.basename(path): path
+                for path in glob.glob(os.path.join(self.hard_negative_dir, "*.tif"))
+            }
+            if len(hard_negative_paths) != len(self.img_paths):
+                raise ValueError(
+                    f"Hard negative masks must match the training set size: "
+                    f"{len(hard_negative_paths)} masks for {len(self.img_paths)} volumes."
+                )
+        elif self.hard_negative_sample_ratio > 0.0:
+            raise ValueError("hard_negative_sample_ratio > 0 requires hard_negative_dir.")
+
         for lab in self.labels:
             pos_mask = lab > 0
             self.pos_coords.append(np.argwhere(pos_mask))
@@ -79,10 +110,38 @@ class Tif3DPatchDataset(Dataset):
             )
             edge_mask = c & (~interior)
             self.edge_coords.append(np.argwhere(edge_mask))
+
+        if self.hard_negative_dir is not None:
+            for img_path in self.img_paths:
+                mask_path = os.path.join(self.hard_negative_dir, os.path.basename(img_path))
+                if not os.path.exists(mask_path):
+                    raise FileNotFoundError(f"Missing hard negative mask: {mask_path}")
+
+                hard_negative_mask = tiff.imread(mask_path).astype(np.float32)
+                hard_negative_mask = np.transpose(hard_negative_mask, (2, 0, 1)) > 0
+                self.hard_negative_coords.append(np.argwhere(hard_negative_mask))
+
+                if self.hardest_negative:
+                    hardest_mask = binary_erosion(
+                        hard_negative_mask,
+                        iterations=max(self.hardest_negative_erosion_iters, 1),
+                        border_value=0,
+                    )
+                    if hardest_mask.any():
+                        self.hardest_negative_coords.append(np.argwhere(hardest_mask))
+                    else:
+                        self.hardest_negative_coords.append(np.argwhere(hard_negative_mask))
+
+        active_hard_negative_coords = (
+            self.hardest_negative_coords
+            if self.hardest_negative and self.hardest_negative_coords
+            else self.hard_negative_coords
+        )
         print(
             f"Dataset: {self.num_volumes} volumes, "
             f"pos coords cached: {[len(c) for c in self.pos_coords]}, "
-            f"edge coords cached: {[len(c) for c in self.edge_coords]}"
+            f"edge coords cached: {[len(c) for c in self.edge_coords]}, "
+            f"hard negatives cached: {[len(c) for c in active_hard_negative_coords]}"
         )
 
     def __len__(self):
@@ -96,12 +155,17 @@ class Tif3DPatchDataset(Dataset):
         d, h, w = vol.shape
         pd, ph, pw = self.patch_size
 
-        # Random crop policy: positive-centered, edge-centered, or fully random.
+        # Random crop policy: positive-centered, edge-centered, hard-negative-centered, or fully random.
         r = np.random.rand()
         if r < self.pos_sample_ratio:
             coords = self.pos_coords[vid]
         elif r < (self.pos_sample_ratio + self.edge_sample_ratio):
             coords = self.edge_coords[vid]
+        elif r < (self.pos_sample_ratio + self.edge_sample_ratio + self.hard_negative_sample_ratio):
+            if self.hardest_negative and self.hardest_negative_coords:
+                coords = self.hardest_negative_coords[vid]
+            else:
+                coords = self.hard_negative_coords[vid]
         else:
             coords = None
 

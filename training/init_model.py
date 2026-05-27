@@ -3,7 +3,7 @@ import torch
 from models.detect import UNet
 
 
-def init_model_and_lr(device, pretrained_path="./models/unet_3d_best.pth"):
+def init_model_and_lr(device, pretrained_path="model_results/run_20260526_213751-100134/unet_3d_best.pth"):
     """Create model and optionally load a pretrained checkpoint."""
     model = UNet().to(device)
     if os.path.exists(pretrained_path):

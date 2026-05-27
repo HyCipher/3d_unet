@@ -20,6 +20,24 @@ from dataset import Tif3DPatchDataset
 from training import *
 
 
+def build_train_dataset(controls, augment):
+    return Tif3DPatchDataset(
+        img_dir=controls["train_img_dir"],
+        label_dir=controls["train_label_dir"],
+        patch_size=controls["patch_size"],
+        patches_per_volume=controls["patches_per_volume"],
+        augment=augment,
+        pos_sample_ratio=float(controls.get("pos_sample_ratio", 0.4)),
+        edge_sample_ratio=float(controls.get("edge_sample_ratio", 0.1)),
+        hard_negative_dir=controls.get("hard_negative_dir") if controls.get("hard_negative_enable", False) else None,
+        hard_negative_sample_ratio=float(controls.get("hard_negative_sample_ratio", 0.0))
+        if controls.get("hard_negative_enable", False)
+        else 0.0,
+        hardest_negative=bool(controls.get("hardest_negative", False)),
+        hardest_negative_erosion_iters=int(controls.get("hardest_negative_erosion_iters", 1)),
+    )
+
+
 # =========================
 # Training
 # =========================
@@ -27,13 +45,7 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     controls = tra_hyper()
 
-    dataset = Tif3DPatchDataset(
-        img_dir=controls["train_img_dir"],
-        label_dir=controls["train_label_dir"],
-        patch_size=controls["patch_size"],
-        patches_per_volume=controls["patches_per_volume"],
-        augment=True,
-    )
+    dataset = build_train_dataset(controls, augment=True)
 
     loader = DataLoader(
         dataset,
@@ -52,13 +64,7 @@ def train():
         augment=False,
     )
 
-    train_eval_dataset = Tif3DPatchDataset(
-        img_dir=controls["train_img_dir"],
-        label_dir=controls["train_label_dir"],
-        patch_size=controls["patch_size"],
-        patches_per_volume=controls["val_patches_per_volume"],
-        augment=False,
-    )
+    train_eval_dataset = build_train_dataset(controls, augment=False)
 
     model, lr, loaded_pretrained = init_model_and_lr(device)
 
