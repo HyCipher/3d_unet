@@ -17,7 +17,13 @@ from utils import (
     finish_wandb_run,
 )
 from dataset import Tif3DPatchDataset
-from training import *
+from training import (
+    build_optimizer,
+    build_train_dataset,
+    init_model_and_lr,
+    save_best_model,
+    train_one_epoch,
+)
 
 
 # =========================
@@ -34,8 +40,8 @@ def train():
         batch_size=controls["batch_size"],
         shuffle=True,
         num_workers=controls["num_workers"],
-        pin_memory=True,
-        persistent_workers=True,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=controls["num_workers"] > 0,
     )
 
     val_dataset = Tif3DPatchDataset(
@@ -49,6 +55,10 @@ def train():
     train_eval_dataset = build_train_dataset(controls, augment=False)
 
     model, lr, loaded_pretrained = init_model_and_lr(device)
+    print(
+        "Model initialization status: "
+        f"{'loaded pretrained checkpoint' if loaded_pretrained else 'training from scratch'}"
+    )
 
     # Compute pos_weight from training labels to handle class imbalance in BCE.
     # Raw ratio (neg/pos) is very large for this dataset, so cap it for stability.
