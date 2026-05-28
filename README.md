@@ -1,214 +1,249 @@
 # 3D UNet Usage Guide
 
-This document explains how to use the training, evaluation, and inference scripts in this project.
+This README covers how to train, evaluate, and run inference with this repository, plus which parameters you can tune.
 
-## Project structure
+## 1. Project overview
+
+Main scripts:
 
 ```
 train_3d_unet_model.py       # Training entry point
 evaluator.py                 # Standalone evaluation (PyTorch)
-evaluator_onnx.py            # Standalone evaluation (ONNX)
-auto_train_then_evaluate.py  # Train then auto-evaluate in one command
-infer.py                     # Inference on new volumes (no labels required)
-config/
-  tra_config.py              # Training hyperparameters
-  val_config.py              # Validation/evaluation defaults
-augmentations/               # Data augmentation modules
-dataset/                     # Dataset / dataloader
-evaluation/                  # Inference, I/O, postprocessing, PR curves
-losses/                      # Loss functions (BCE, Focal, DiceFocal)
-models/                      # UNet architecture
-training/                    # Training loop helpers
-utils/                       # wandb logging utilities
-validate/                    # Metrics, evaluators, reporting
+evaluator_onnx.py            # Standalone evaluation (ONNX Runtime)
+infer.py                     # Inference on unlabeled volumes
+build_hard_negative_dataset.py  # Build hard-negative masks from probability maps
 ```
 
-## 0. Install dependencies
+Config files:
 
-Create or activate your Python environment first, then install the project dependencies:
+```
+config/tra_config.py         # Training config
+config/val_config.py         # Evaluation config
+```
+
+## 2. Installation
+
+Create or activate your environment, then install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-If you plan to use wandb logging, log in once after installation:
+If you use wandb:
 
 ```bash
 wandb login
 ```
 
-## 1. Train the model
+## 3. Data layout
+
+Default training/validation paths are configured in `config/tra_config.py`.
+
+Expected layout:
+
+```
+data/
+  training/
+    images/*.tif
+    labels/*.tif
+  validation/
+    images/*.tif
+    labels/*.tif
+  training_hn/
+    hard_negative_masks/*.tif    # optional, used when hard negatives are enabled
+```
+
+Notes:
+
+- Image/label files must match one-to-one by sorted filename order.
+- Volumes are read as 3D TIFF and internally converted from `(H, W, Z)` to `(Z, H, W)`.
+
+## 4. Train
+
+Run training:
 
 ```bash
 python train_3d_unet_model.py
 ```
 
-All training hyperparameters are centralized in `config/tra_config.py`:
+Training outputs:
+
+- Epoch checkpoints: `model_results/run_<timestamp>/unet_3d_epoch_*.pth`
+- Best checkpoint (by validation Dice): `model_results/run_<timestamp>/unet_3d_best.pth`
+
+### 4.1 Train config: `config/tra_config.py`
+
+#### Paths and runtime
 
 | Parameter | Default | Description |
 |---|---|---|
-| `num_epochs` | 50 | Total training epochs |
+| `project` | `c_elegans_3d_unet` | wandb project name used by training logger |
+| `architecture` | `3D UNet` | Metadata field for logging |
+| `train_img_dir` | `data/training/images` | Training images |
+| `train_label_dir` | `data/training/labels` | Training labels |
+| `val_img_dir` | `data/validation/images` | Validation images |
+| `val_label_dir` | `data/validation/labels` | Validation labels |
+| `batch_size` | 2 | Batch size |
+| `num_workers` | 4 | DataLoader worker processes |
+| `num_epochs` | 50 | Number of epochs |
+
+DataLoader behavior in `train_3d_unet_model.py`:
+
+- `pin_memory` is enabled only when CUDA is available.
+- `persistent_workers` is enabled only when `num_workers > 0`.
+
+#### Patch sampling and augmentation
+
+| Parameter | Default | Description |
+|---|---|---|
+| `patch_size` | `(8, 512, 512)` | Training patch size `(Z, H, W)` |
+| `patches_per_volume` | 500 | Random patches sampled per training volume |
+| `val_patches_per_volume` | 50 | Random patches sampled per validation volume during in-training eval |
+| `disable_aug_last_epochs` | 8 | Disable augmentation in final N epochs |
+
+#### Hard-negative sampling
+
+| Parameter | Default | Description |
+|---|---|---|
+| `hard_negative_enable` | `True` | Enable hard-negative masks |
+| `hard_negative_dir` | `data/training_hn/hard_negative_masks` | Hard-negative mask directory |
+| `hard_negative_sample_ratio` | 0.5 | Sampling ratio for hard-negative-centered patches |
+| `hardest_negative` | `False` | Use eroded hard-negative core if available |
+| `hardest_negative_erosion_iters` | 1 | Erosion iterations for hardest-negative mode |
+
+The sampling ratios used by the dataset must satisfy:
+
+`pos_sample_ratio + edge_sample_ratio + hard_negative_sample_ratio <= 1.0`
+
+with defaults from dataset builder:
+
+- `pos_sample_ratio`: `0.4`
+- `edge_sample_ratio`: `0.1`
+
+#### Optimization and loss
+
+| Parameter | Default | Description |
+|---|---|---|
+| `optimizer` | `adam` | `adam` / `adamw` / `sgd` |
+| `weight_decay` | 0.0 | Weight decay for optimizer |
+| `momentum` | 0.9 | Only used when `optimizer = sgd` |
 | `loss_type` | `bce` | `bce` / `focal` / `dicefocal` |
-| `dice_weight` | 0.8 | Weight for Dice term (dicefocal only) |
-| `focal_weight` | 1.0 | Weight for Focal term (dicefocal only) |
-| `val_patch_size` | `(8, 512, 512)` | Patch size used during in-training validation |
-| `val_stride` | `(4, 256, 256)` | Stride used during in-training validation |
-| `val_threshold` | 0.1 | Binarization threshold for in-training validation |
-| `validate_every` | 10 | Validate every N epochs |
-| `max_val_volumes` | `None` | Limit volumes validated per run (set integer for speed) |
-| `dust_remove_min_size` | 64 | Remove connected components smaller than this (voxels) |
-| `pos_weight_cap` | 10.0 | Cap on BCE pos_weight to prevent instability |
-| `grad_clip_norm` | 1.0 | Gradient clipping threshold |
-| `disable_aug_last_epochs` | 8 | Disable augmentation in the final N epochs |
+| `dice_weight` | 0.8 | Dice term weight in `dicefocal` |
+| `focal_weight` | 1.0 | Focal term weight in `dicefocal` |
+| `pos_weight_cap` | 10.0 | Cap for auto-computed BCE positive class weight |
+| `grad_clip_norm` | 1.0 | Gradient clipping threshold (0 to disable) |
+
+Scheduler in training script:
+
+- `ReduceLROnPlateau(mode="max", factor=0.5, patience=3, min_lr=1e-6)`
+- Stepped by validation Dice.
+
+#### In-training validation
+
+| Parameter | Default | Description |
+|---|---|---|
+| `validate_every` | 10 | Run validation every N epochs |
 | `eval_train_set` | `False` | Also evaluate training set each validation step |
+| `max_val_volumes` | `None` | Limit number of validation volumes per validation pass |
+| `val_patch_size` | `(8, 512, 512)` | Sliding-window patch size for in-training validation |
+| `val_stride` | `(4, 256, 256)` | Sliding-window stride for in-training validation |
+| `val_threshold` | 0.1 | Probability threshold for in-training metrics |
+| `dust_remove_min_size` | 128 | Remove connected components smaller than this |
 
-The training script will:
+## 5. Build hard-negative masks (optional)
 
-- Save the best checkpoint as `./model_results/run_<timestamp>/unet_3d_best.pth` (selected by validation Dice)
-- Use `Adam` + `ReduceLROnPlateau(mode=max, factor=0.5, patience=3, min_lr=1e-6)`
-- Auto-compute `pos_weight` from training labels (capped by `pos_weight_cap`)
+You can generate hard-negative masks from saved probability maps:
 
-## 2. Evaluate a model (PyTorch)
+```bash
+python build_hard_negative_dataset.py \
+  --pred-dir validation_results/probs \
+  --train-img-dir data/training/images \
+  --train-label-dir data/training/labels \
+  --output-dir data/training_hn \
+  --threshold 0.8 \
+  --enable-hard-negative
+```
 
-All evaluation defaults are centralized in `config/val_config.py`. Edit that file to set the
-model path, patch size, threshold, and wandb settings, then simply run:
+Useful flags:
+
+- `--hardest-negative`
+- `--erosion-iters`
+- `--pos-ratio`
+- `--edge-ratio`
+- `--hard-negative-ratio`
+- `--pred-prefix`, `--img-token`, `--label-token`
+
+The script writes `hard_negative_config.json` into `--output-dir`.
+
+## 6. Evaluate (PyTorch)
+
+Set parameters in `config/val_config.py`, then run:
 
 ```bash
 python evaluator.py
 ```
 
-`evaluator.py` will:
-
-- Run sliding-window inference on all validation volumes
-- Compute Dice / IoU / F1 / Precision / Recall / Specificity / Accuracy per sample and as mean
-- Optionally upload metrics, per-sample visualizations, PR/ROC curves, and summary tables to wandb
-- Save prediction and probability `.tif` files to `validation_results/` when `save_results = True`
-
-Key fields in `config/val_config.py`:
+Key evaluation config fields:
 
 | Field | Default | Description |
 |---|---|---|
-| `model_path` | `./model_results/run_.../unet_3d_best.pth` | Checkpoint to evaluate |
+| `model_path` | `./model_results/run_.../unet_3d_best.pth` | Checkpoint path |
+| `val_img_dir` | `data/validation/images` | Validation images |
+| `val_label_dir` | `data/validation/labels` | Validation labels |
 | `patch_size` | `(8, 512, 512)` | Sliding-window patch size |
 | `stride` | `(4, 256, 256)` | Sliding-window stride |
 | `threshold` | 0.1 | Binarization threshold |
-| `dust_remove_min_size` | 128 | Remove small components (voxels) |
-| `loss_type` | `bce` | `bce` / `focal` / `dicefocal` / `none` |
-| `save_results` | `True` | Save pred/prob tif files |
+| `dust_remove_min_size` | 128 | Remove small connected components |
+| `eval_affinity` | `True` | Enable affinity evaluation |
+| `affinity_offsets` | `[(1,0,0), (0,1,0), (0,0,1)]` | Neighbor offsets for affinity metrics |
+| `loss_type` | `bce` | `bce` / `focal` / `dicefocal` |
+| `save_results` | `True` | Save prediction and probability TIFF files |
 | `wandb` | `True` | Enable wandb logging |
-| `wandb_project` | `c_elegans_3d_unet_validation` | wandb project name |
-| `wandb_run_name` | _(set in config)_ | wandb run name |
+| `wandb_project` | `c_elegans_3d_unet_validation` | wandb project |
+| `wandb_run_name` | set in config | wandb run name |
 
-## 3. Evaluate a model (ONNX)
+Output files:
+
+- `validation_results/pred/*.tif`
+- `validation_results/probs/*.tif`
+
+## 7. Evaluate (ONNX)
 
 ```bash
 python evaluator_onnx.py
 ```
 
-Uses the same `config/val_config.py` defaults. Replace `model_path` with a `.onnx` file path.
-Runs on CPU by default; switches to CUDA if `onnxruntime-gpu` is installed and a GPU is detected.
+Set `model_path` in `config/val_config.py` to an `.onnx` model.
 
-## 4. Train then auto-evaluate in one command
+## 8. Inference on new volumes
 
-```bash
-python auto_train_then_evaluate.py
-```
-
-This runs Step 1 (training) and immediately Step 2 (evaluation of the best checkpoint) using
-the defaults in `config/val_config.py`. Optional CLI overrides:
-
-```bash
-python auto_train_then_evaluate.py \
-  --model-path ./model_results/run_XYZ/unet_3d_best.pth \
-  --threshold 0.1 \
-  --loss-type bce \
-  --save-results \
-  --eval-wandb
-```
-
-| Flag | Description |
-|---|---|
-| `--model-path` | Explicit checkpoint; if omitted uses latest `run_*/unet_3d_best.pth` |
-| `--val-img-dir` | Override validation image directory |
-| `--val-label-dir` | Override validation label directory |
-| `--threshold` | Override binarization threshold |
-| `--loss-type` | Override loss type for validation loss calculation |
-| `--save-results` / `--no-save-results` | Toggle saving tif outputs |
-| `--eval-wandb` / `--no-eval-wandb` | Toggle wandb logging for the eval stage |
-
-## 5. Inference on new volumes (no labels)
-
-Edit the `__main__` block in `infer.py` to set your paths, then:
+Edit input/output and model path in the `__main__` block of `infer.py`, then run:
 
 ```bash
 python infer.py
 ```
 
-Outputs:
-- `result_seg.tif`: binary segmentation (uint8, values 0/255, shape H×W×Z)
-- `prob_map.tif`: probability map (float32, shape H×W×Z)
+Typical outputs:
 
-Key parameters inside `infer.py`:
+- `result_seg.tif` (binary segmentation)
+- `prob_map.tif` (probability map)
 
-| Parameter | Default | Description |
-|---|---|---|
-| `patch_size` | `(16, 512, 512)` | Patch size for sliding-window inference |
-| `stride` | `(4, 128, 128)` | Stride for sliding-window inference |
-| `threshold` | 0.1 | Binarization threshold |
+## 9. Practical tuning tips
 
-## 6. Evaluation output files
+- Out-of-memory during training or validation:
+  reduce `patch_size` and increase overlap later only if needed.
+- Higher recall:
+  lower `val_threshold` (or validation `threshold`) to values like `0.05`.
+- Higher precision:
+  raise threshold to values like `0.2` to `0.3`.
+- Noisy validation curves:
+  set `max_val_volumes=None` and/or increase `validate_every`.
+- Unstable training:
+  lower learning rate, reduce `hard_negative_sample_ratio`, or increase `pos_weight_cap` carefully.
 
-| File | Description |
-|---|---|
-| `validation_results/pred_*.tif` | Binary predictions (uint8) |
-| `validation_results/prob_*.tif` | Probability maps (float32) |
+## 10. Dependencies
 
-When `wandb = True`, `evaluator.py` also uploads:
-
-- Per-sample metrics table
-- Center-slice images (original / label / prediction / probability) per sample
-- PR curve, ROC curve, and F1-threshold curve
-- Dataset-level mean metrics summary table
-
-## 7. Common issues
-
-### 7.1 GPU out of memory
-
-Reduce patch size and stride in `config/val_config.py` (or `config/tra_config.py` for training):
-
-```python
-"patch_size": (8, 256, 256),
-"stride":     (4, 128, 128),
-```
-
-### 7.2 Need higher Recall
-
-Lower the threshold in `config/val_config.py`:
-
-```python
-"threshold": 0.05,
-```
-
-### 7.3 Need higher Precision
-
-Raise the threshold:
-
-```python
-"threshold": 0.3,
-```
-
-### 7.4 Noisy validation curves during training
-
-Set `max_val_volumes` to `None` in `config/tra_config.py` to validate all volumes (slower but more stable).
-Also consider increasing `validate_every` if validation is too frequent.
-
-### 7.5 wandb logging checklist
-
-- Install `wandb` and run `wandb login` once
-- Set `"wandb": True` in `config/val_config.py`
-- If run creation fails in restricted environments, set `WANDB_MODE=offline` and sync later
-
-## 8. Dependencies
+Main libraries:
 
 ```
 numpy
@@ -221,7 +256,7 @@ wandb
 onnxruntime
 ```
 
-Install all at once:
+Install with:
 
 ```bash
 pip install -r requirements.txt
