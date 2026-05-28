@@ -18,6 +18,9 @@ def tra_hyper():
         "val_stride": (4, 256, 256),
         "val_threshold": 0.1,
         "dust_remove_min_size": 128,
+        "optimizer": "adam",  # "adam" | "adamw" | "sgd"
+        "weight_decay": 0.0,
+        "momentum": 0.9,  # Used only when optimizer is "sgd"
         "loss_type": "bce",  # "bce" | "focal" | "dicefocal"
         "validate_every": 10,
         "eval_train_set": False, # Set to True to evaluate training set each epoch (slows down training)
