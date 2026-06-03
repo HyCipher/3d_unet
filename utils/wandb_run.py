@@ -17,7 +17,7 @@ def build_wandb_config(loader, lr, controls):
         "val_stride": controls["val_stride"],
         "val_threshold": controls["val_threshold"],
         "loss_function": controls["loss_type"],
-        "validate_every": controls["validate_every"],
+        "save_every": controls["save_every"],
         "eval_train_set": controls["eval_train_set"],
         "pos_weight_cap": controls["pos_weight_cap"],
         "grad_clip_norm": controls["grad_clip_norm"],

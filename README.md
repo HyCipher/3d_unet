@@ -1,66 +1,91 @@
-# 3D UNet Usage Guide
+# C. elegans Synapse Detection with 3D U-Net
 
-This README covers how to train, evaluate, and run inference with this repository, plus which parameters you can tune.
+This project is designed for synapse detection on 3D C. elegans volumes.
+It uses a 3D U-Net for voxel-level binary segmentation and supports the full workflow: training, validation, and inference.
 
-## 1. Project overview
+## 1. What This Project Does
 
-Main scripts:
+Main goals:
 
+- Read 3D TIFF volumes (stored as H, W, Z by default)
+- Train a 3D U-Net to detect synapse regions
+- Run sliding-window validation and inference on full volumes
+- Report standard segmentation metrics (Dice, IoU, F1, Precision, Recall, etc.)
+- Optionally log experiments with Weights and Biases (wandb)
+
+Typical use cases:
+
+- Automatic synapse detection in C. elegans neuroimaging data
+- Supervised 3D segmentation with paired image/label volumes
+
+## 2. Project Structure
+
+Key folders and scripts:
+
+```text
+3d_unet/
+├── config/
+│   ├── tra_config.py                 # Training configuration
+│   └── val_config.py                 # Validation configuration
+├── data/
+│   ├── training/
+│   │   ├── images/                   # Training images (*.tif)
+│   │   └── labels/                   # Training labels (*.tif)
+│   └── validation/
+│       ├── images/                   # Validation images (*.tif)
+│       └── labels/                   # Validation labels (*.tif)
+├── models/
+│   └── detect.py                     # 3D U-Net model definition
+├── training/                         # Training pipeline and optimizer utilities
+├── evaluation/                       # Sliding-window inference, visualization, evaluation tools
+├── validate/                         # Metric computation
+├── train_3d_unet_model.py            # Training entry point
+├── evaluator.py                      # PyTorch validation entry point
+├── evaluator_onnx.py                 # ONNX validation entry point
+├── infer.py                          # Inference entry point for a single volume
+├── build_hard_negative_dataset.py    # Optional: hard-negative dataset builder
+└── requirements.txt
 ```
-train_3d_unet_model.py       # Training entry point
-evaluator.py                 # Standalone evaluation (PyTorch)
-evaluator_onnx.py            # Standalone evaluation (ONNX Runtime)
-infer.py                     # Inference on unlabeled volumes
-build_hard_negative_dataset.py  # Build hard-negative masks from probability maps
-```
 
-Config files:
+## 3. How To Use
 
-```
-config/tra_config.py         # Training config
-config/val_config.py         # Evaluation config
-```
+Run the following commands from the project root: C_elegans_UNet/3d_unet.
 
-## 2. Installation
-
-Create or activate your environment, then install dependencies:
+### 3.1 Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-If you use wandb:
+If you want experiment tracking:
 
 ```bash
 wandb login
 ```
 
-## 3. Data layout
+### 3.2 Prepare Data
 
-Default training/validation paths are configured in `config/tra_config.py`.
+Default training/validation paths are defined in config/tra_config.py.
 
-Expected layout:
+Recommended layout:
 
-```
+```text
 data/
-  training/
-    images/*.tif
-    labels/*.tif
-  validation/
-    images/*.tif
-    labels/*.tif
-  training_hn/
-    hard_negative_masks/*.tif    # optional, used when hard negatives are enabled
+├── training/
+│   ├── images/*.tif
+│   └── labels/*.tif
+└── validation/
+    ├── images/*.tif
+    └── labels/*.tif
 ```
 
 Notes:
 
-- Image/label files must match one-to-one by sorted filename order.
-- Volumes are read as 3D TIFF and internally converted from `(H, W, Z)` to `(Z, H, W)`.
+- Image and label files must match one-to-one (after sorted filename pairing)
+- Volumes are internally converted from H, W, Z to Z, H, W
+- Label voxels greater than 0 are treated as foreground (synapse)
 
-## 4. Train
-
-Run training:
+### 3.3 Train the Model
 
 ```bash
 python train_3d_unet_model.py
@@ -68,196 +93,70 @@ python train_3d_unet_model.py
 
 Training outputs:
 
-- Epoch checkpoints: `model_results/run_<timestamp>/unet_3d_epoch_*.pth`
-- Best checkpoint (by validation Dice): `model_results/run_<timestamp>/unet_3d_best.pth`
+- Periodic checkpoints: model_results/run_timestamp/unet_3d_epoch_xx.pth
+- Interrupted training checkpoint: model_results/run_timestamp/unet_3d_interrupted.pth
 
-### 4.1 Train config: `config/tra_config.py`
+Commonly tuned parameters in config/tra_config.py:
 
-#### Paths and runtime
+- train_img_dir, train_label_dir, val_img_dir, val_label_dir
+- patch_size, batch_size, num_epochs
+- loss_type (bce / focal / dicefocal)
+- val_threshold, dust_remove_min_size
+- disable_aug_last_epochs, grad_clip_norm
 
-| Parameter | Default | Description |
-|---|---|---|
-| `project` | `c_elegans_3d_unet` | wandb project name used by training logger |
-| `architecture` | `3D UNet` | Metadata field for logging |
-| `train_img_dir` | `data/training/images` | Training images |
-| `train_label_dir` | `data/training/labels` | Training labels |
-| `val_img_dir` | `data/validation/images` | Validation images |
-| `val_label_dir` | `data/validation/labels` | Validation labels |
-| `batch_size` | 2 | Batch size |
-| `num_workers` | 4 | DataLoader worker processes |
-| `num_epochs` | 50 | Number of epochs |
+### 3.4 Validate the Model (PyTorch)
 
-DataLoader behavior in `train_3d_unet_model.py`:
+First set these fields in config/val_config.py:
 
-- `pin_memory` is enabled only when CUDA is available.
-- `persistent_workers` is enabled only when `num_workers > 0`.
+- model_path (checkpoint to evaluate)
+- val_img_dir, val_label_dir
+- patch_size, stride, threshold
 
-#### Patch sampling and augmentation
-
-| Parameter | Default | Description |
-|---|---|---|
-| `patch_size` | `(8, 512, 512)` | Training patch size `(Z, H, W)` |
-| `patches_per_volume` | 500 | Random patches sampled per training volume |
-| `val_patches_per_volume` | 50 | Random patches sampled per validation volume during in-training eval |
-| `disable_aug_last_epochs` | 8 | Disable augmentation in final N epochs |
-
-#### Hard-negative sampling
-
-| Parameter | Default | Description |
-|---|---|---|
-| `hard_negative_enable` | `True` | Enable hard-negative masks |
-| `hard_negative_dir` | `data/training_hn/hard_negative_masks` | Hard-negative mask directory |
-| `hard_negative_sample_ratio` | 0.5 | Sampling ratio for hard-negative-centered patches |
-| `hardest_negative` | `False` | Use eroded hard-negative core if available |
-| `hardest_negative_erosion_iters` | 1 | Erosion iterations for hardest-negative mode |
-
-The sampling ratios used by the dataset must satisfy:
-
-`pos_sample_ratio + edge_sample_ratio + hard_negative_sample_ratio <= 1.0`
-
-with defaults from dataset builder:
-
-- `pos_sample_ratio`: `0.4`
-- `edge_sample_ratio`: `0.1`
-
-#### Optimization and loss
-
-| Parameter | Default | Description |
-|---|---|---|
-| `optimizer` | `adam` | `adam` / `adamw` / `sgd` |
-| `weight_decay` | 0.0 | Weight decay for optimizer |
-| `momentum` | 0.9 | Only used when `optimizer = sgd` |
-| `loss_type` | `bce` | `bce` / `focal` / `dicefocal` |
-| `dice_weight` | 0.8 | Dice term weight in `dicefocal` |
-| `focal_weight` | 1.0 | Focal term weight in `dicefocal` |
-| `pos_weight_cap` | 10.0 | Cap for auto-computed BCE positive class weight |
-| `grad_clip_norm` | 1.0 | Gradient clipping threshold (0 to disable) |
-
-Scheduler in training script:
-
-- `ReduceLROnPlateau(mode="max", factor=0.5, patience=3, min_lr=1e-6)`
-- Stepped by validation Dice.
-
-#### In-training validation
-
-| Parameter | Default | Description |
-|---|---|---|
-| `validate_every` | 10 | Run validation every N epochs |
-| `eval_train_set` | `False` | Also evaluate training set each validation step |
-| `max_val_volumes` | `None` | Limit number of validation volumes per validation pass |
-| `val_patch_size` | `(8, 512, 512)` | Sliding-window patch size for in-training validation |
-| `val_stride` | `(4, 256, 256)` | Sliding-window stride for in-training validation |
-| `val_threshold` | 0.1 | Probability threshold for in-training metrics |
-| `dust_remove_min_size` | 128 | Remove connected components smaller than this |
-
-## 5. Build hard-negative masks (optional)
-
-You can generate hard-negative masks from saved probability maps:
-
-```bash
-python build_hard_negative_dataset.py \
-  --pred-dir validation_results/probs \
-  --train-img-dir data/training/images \
-  --train-label-dir data/training/labels \
-  --output-dir data/training_hn \
-  --threshold 0.8 \
-  --enable-hard-negative
-```
-
-Useful flags:
-
-- `--hardest-negative`
-- `--erosion-iters`
-- `--pos-ratio`
-- `--edge-ratio`
-- `--hard-negative-ratio`
-- `--pred-prefix`, `--img-token`, `--label-token`
-
-The script writes `hard_negative_config.json` into `--output-dir`.
-
-## 6. Evaluate (PyTorch)
-
-Set parameters in `config/val_config.py`, then run:
+Then run:
 
 ```bash
 python evaluator.py
 ```
 
-Key evaluation config fields:
+Validation outputs (when save_results=True):
 
-| Field | Default | Description |
-|---|---|---|
-| `model_path` | `./model_results/run_.../unet_3d_best.pth` | Checkpoint path |
-| `val_img_dir` | `data/validation/images` | Validation images |
-| `val_label_dir` | `data/validation/labels` | Validation labels |
-| `patch_size` | `(8, 512, 512)` | Sliding-window patch size |
-| `stride` | `(4, 256, 256)` | Sliding-window stride |
-| `threshold` | 0.1 | Binarization threshold |
-| `dust_remove_min_size` | 128 | Remove small connected components |
-| `eval_affinity` | `True` | Enable affinity evaluation |
-| `affinity_offsets` | `[(1,0,0), (0,1,0), (0,0,1)]` | Neighbor offsets for affinity metrics |
-| `loss_type` | `bce` | `bce` / `focal` / `dicefocal` |
-| `save_results` | `True` | Save prediction and probability TIFF files |
-| `wandb` | `True` | Enable wandb logging |
-| `wandb_project` | `c_elegans_3d_unet_validation` | wandb project |
-| `wandb_run_name` | set in config | wandb run name |
+- validation_results/pred/*.tif
+- validation_results/probs/*.tif
 
-Output files:
+### 3.5 Validate with ONNX (Optional)
 
-- `validation_results/pred/*.tif`
-- `validation_results/probs/*.tif`
-
-## 7. Evaluate (ONNX)
+Set model_path in config/val_config.py to an .onnx file, then run:
 
 ```bash
 python evaluator_onnx.py
 ```
 
-Set `model_path` in `config/val_config.py` to an `.onnx` model.
+### 3.6 Run Inference on New Data
 
-## 8. Inference on new volumes
+Edit the __main__ section in infer.py:
 
-Edit input/output and model path in the `__main__` block of `infer.py`, then run:
+- img_path: input 3D TIFF file
+- model_path: trained .pth checkpoint
+- save_path: output segmentation path
+
+Run:
 
 ```bash
 python infer.py
 ```
 
-Typical outputs:
+Default outputs:
 
-- `result_seg.tif` (binary segmentation)
-- `prob_map.tif` (probability map)
+- result_seg.tif: binary segmentation
+- prob_map.tif: probability map
 
-## 9. Practical tuning tips
+## 4. Practical Tuning Tips
 
-- Out-of-memory during training or validation:
-  reduce `patch_size` and increase overlap later only if needed.
-- Higher recall:
-  lower `val_threshold` (or validation `threshold`) to values like `0.05`.
-- Higher precision:
-  raise threshold to values like `0.2` to `0.3`.
-- Noisy validation curves:
-  set `max_val_volumes=None` and/or increase `validate_every`.
-- Unstable training:
-  lower learning rate, reduce `hard_negative_sample_ratio`, or increase `pos_weight_cap` carefully.
+- Out of memory: reduce patch_size or batch_size
+- Low recall: lower threshold (for example, threshold=0.05)
+- Low precision: increase threshold (for example, 0.2 to 0.3)
+- Unstable training: lower learning rate or tune pos_weight_cap and grad_clip_norm
 
-## 10. Dependencies
+## 5. One-Line Summary
 
-Main libraries:
-
-```
-numpy
-scipy
-matplotlib
-tifffile
-torch
-torchvision
-wandb
-onnxruntime
-```
-
-Install with:
-
-```bash
-pip install -r requirements.txt
-```
+This is an end-to-end 3D U-Net pipeline for C. elegans synapse detection, covering data preparation, training, validation, and inference.

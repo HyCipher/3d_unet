@@ -6,7 +6,6 @@ def build_train_dataset(controls, augment):
         img_dir=controls["train_img_dir"],
         label_dir=controls["train_label_dir"],
         patch_size=controls["patch_size"],
-        patches_per_volume=controls["patches_per_volume"],
         augment=augment,
         pos_sample_ratio=float(controls.get("pos_sample_ratio", 0.4)),
         edge_sample_ratio=float(controls.get("edge_sample_ratio", 0.1)),

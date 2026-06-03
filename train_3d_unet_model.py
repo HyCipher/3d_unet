@@ -3,25 +3,17 @@ import torch
 from torch.utils.data import DataLoader
 from config.tra_config import tra_hyper
 from losses import build_criterion
-from validate.evaluators import (  
-    evaluate_with_optional_limit,
-    maybe_evaluate_train_set,
-)
-from validate.reporting import print_metrics  
 from utils import (
     build_wandb_config,
     build_aug_wandb_config,
     init_wandb_run,
     log_training_loss,
-    log_validation_to_wandb,
     finish_wandb_run,
 )
-from dataset import Tif3DPatchDataset
 from training import (
     build_optimizer,
     build_train_dataset,
     init_model_and_lr,
-    save_best_model,
     train_one_epoch,
 )
 
@@ -44,16 +36,7 @@ def train():
         persistent_workers=controls["num_workers"] > 0,
     )
 
-    val_dataset = Tif3DPatchDataset(
-        img_dir=controls["val_img_dir"],
-        label_dir=controls["val_label_dir"],
-        patch_size=controls["patch_size"],
-        patches_per_volume=controls["val_patches_per_volume"],
-        augment=False,
-    )
-
-    train_eval_dataset = build_train_dataset(controls, augment=False)
-
+# Initialize model and learning rate, with optional pretrained checkpoint loading.
     model, lr, loaded_pretrained = init_model_and_lr(device)
     print(
         "Model initialization status: "
@@ -81,18 +64,6 @@ def train():
     ).to(device)
 
     optimizer = build_optimizer(model, controls, lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="max",
-        factor=0.5,
-        patience=3,
-        min_lr=1e-6,
-    )
-    
-    sample_input = dataset[0][0].unsqueeze(0).to(device)
-
-    # Track best validation dice to save best model checkpoint
-    best_val_dice = 0.0
 
     # Initialize wandb run before training loop
     wandb_config = build_wandb_config(loader, lr, controls)
@@ -118,41 +89,12 @@ def train():
 
             log_training_loss(epoch=epoch + 1, train_loss=avg_epoch_loss)
 
-            if (epoch + 1) % controls["validate_every"] == 0 or (epoch == 0 and not loaded_pretrained):
-                # Evaluate on train set for sanity check (optional, can be disabled in config)
-                train_metrics = maybe_evaluate_train_set(
-                    model,
-                    train_eval_dataset,
-                    device,
-                    controls,
-                    criterion,
-                )
-
-                # Evaluate on validation set with optional volume limit for faster feedback
-                val_metrics = evaluate_with_optional_limit(
-                    model,
-                    val_dataset,
-                    device,
-                    controls,
-                    criterion,
-                )
-
-                print_metrics(train_metrics, val_metrics)
-                
-                log_validation_to_wandb(train_metrics, val_metrics, epoch + 1)
-
-                scheduler.step(val_metrics["dice"])
-                print(f"Scheduler updated by validation Dice; next LR: {optimizer.param_groups[0]['lr']:.2e}")
-
-                # Save periodic epoch checkpoint and best model by validation Dice
+            # Save periodic checkpoints without running in-training validation.
+            if (epoch + 1) % controls["save_every"] == 0 or (epoch + 1) == controls["num_epochs"]:
                 os.makedirs(f"./model_results/{run_name}", exist_ok=True)
                 model_path = f"./model_results/{run_name}/unet_3d_epoch_{epoch + 1}.pth"
                 torch.save(model.state_dict(), model_path)
                 print(f"Model saved: {model_path}")
-
-
-                # Save best model
-                best_val_dice = save_best_model(model, val_metrics, best_val_dice, sample_input, run_name)
                 
         finish_wandb_run()
 

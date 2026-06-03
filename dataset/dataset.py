@@ -1,12 +1,25 @@
 
 import os
 import glob
+import logging
 import numpy as np
 import tifffile as tiff
 import torch
 from torch.utils.data import Dataset
 from scipy.ndimage import binary_erosion
 from augmentations.data_augmentation import apply_augmentation
+
+
+logger = logging.getLogger(__name__)
+
+
+def compute_patches_per_volume(total_volume_size, patch_size):
+    """Heuristic to compute how many patches to sample from each volume per epoch."""
+    coverage=2.5
+    patch_volume = int(np.prod(patch_size))
+    total_volume_size = int(total_volume_size)
+
+    return int(np.ceil((coverage * total_volume_size) / patch_volume))
 
 
 class Tif3DPatchDataset(Dataset):
@@ -22,7 +35,6 @@ class Tif3DPatchDataset(Dataset):
         img_dir,
         label_dir,
         patch_size=(4, 128, 128),
-        patches_per_volume=200,
         augment=True,
         pos_sample_ratio=0.4,
         edge_sample_ratio=0.1,
@@ -52,9 +64,14 @@ class Tif3DPatchDataset(Dataset):
 
             self.volumes.append(vol)
             self.labels.append(lab)
+        
+        self.volume_patch_counts = [
+            compute_patches_per_volume(lab.size, self.patch_size)
+            for lab in self.labels
+        ]
 
-        self.num_volumes = len(self.volumes)
-        self.patches_per_volume = patches_per_volume
+        self._cumulative_patch_counts = np.cumsum(self.volume_patch_counts)
+        self.total_patches = int(self._cumulative_patch_counts[-1]) if self.volume_patch_counts else 0
         self.pos_sample_ratio = float(pos_sample_ratio)
         self.edge_sample_ratio = float(edge_sample_ratio)
         self.hard_negative_dir = hard_negative_dir
@@ -137,18 +154,20 @@ class Tif3DPatchDataset(Dataset):
             if self.hardest_negative and self.hardest_negative_coords
             else self.hard_negative_coords
         )
-        print(
-            f"Dataset: {self.num_volumes} volumes, "
-            f"pos coords cached: {[len(c) for c in self.pos_coords]}, "
-            f"edge coords cached: {[len(c) for c in self.edge_coords]}, "
-            f"hard negatives cached: {[len(c) for c in active_hard_negative_coords]}"
-        )
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "volume_patch_counts: %s, pos coords cached: %s, edge coords cached: %s, hard negatives cached: %s",
+                self.volume_patch_counts,
+                [len(c) for c in self.pos_coords],
+                [len(c) for c in self.edge_coords],
+                [len(c) for c in active_hard_negative_coords],
+            )
 
     def __len__(self):
-        return self.num_volumes * self.patches_per_volume
+        return self.total_patches
 
     def __getitem__(self, idx):
-        vid = idx // self.patches_per_volume
+        vid = int(np.searchsorted(self._cumulative_patch_counts, idx, side="right"))
         vol = self.volumes[vid]
         lab = self.labels[vid]
 
