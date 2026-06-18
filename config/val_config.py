@@ -6,7 +6,7 @@ def get_validation_config():
         "val_label_dir": "data/validation/labels",
         "patch_size": (8, 512, 512),
         "stride": (4, 256, 256),
-        "threshold": 0.1,
+        "threshold": 0.45,
         "dust_remove_min_size": 128,
         "eval_affinity": True,
         "affinity_offsets": [(1, 0, 0), (0, 1, 0), (0, 0, 1)],

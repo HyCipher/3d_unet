@@ -1,6 +1,6 @@
 import os
 import torch
-from models.detect import UNet
+from models import UNet
 
 
 def init_model_and_lr(device, pretrained_path="model_results/unet_3d_best.pth"):

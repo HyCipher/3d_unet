@@ -9,7 +9,7 @@ def tra_hyper():
         "val_label_dir": "data/validation/labels",
         "patch_size": (8, 512, 512),
         "val_patches_per_volume": 50,
-        "batch_size": 2,
+        "batch_size": 1,
         "num_workers": 4,
         "num_epochs": 50,
         "max_val_volumes": None,
