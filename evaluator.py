@@ -6,7 +6,7 @@ import torch
 import wandb
 import matplotlib.pyplot as plt
 
-from models.detect import UNet
+from models import UNet
 from config.val_config import get_validation_config
 from validate.metrics import dice_coefficient, iou_score, precision_recall_f1_specificity
 from evaluation import (
