@@ -38,15 +38,17 @@ class CascadeConv3d(nn.Module):
 		super(CascadeConv3d, self).__init__()
 		self.conv_xy = conv1x3x3_xy(in_channels, out_channels)
 		self.conv_z = conv3x1x1_z(out_channels, out_channels)
-		self.fusion_conv = conv1x1x1(out_channels*2, out_channels)
-		self.norm = nn.InstanceNorm3d(out_channels, affine=True)
+		# self.fusion_conv = conv1x1x1(out_channels*2, out_channels)
+		num_groups = min(8, out_channels // 2)  # Ensure at least 2 channels per group
+		self.norm = nn.GroupNorm(num_groups=num_groups, num_channels=out_channels, affine=True)
   
 
 	def forward(self, x):
 		feat_xy = self.conv_xy(x)
 		feat_z = self.conv_z(feat_xy)
-		feat = torch.cat([feat_xy, feat_z], dim=1)
-		x = self.fusion_conv(feat)
+		# feat = torch.cat([feat_xy, feat_z], dim=1)
+		# x = self.fusion_conv(feat)
+		x = feat_xy + feat_z
 		x = F.relu(self.norm(x))
 
 		return x
@@ -126,11 +128,11 @@ class UpConvBlock3(nn.Module):
 
 
 # Network architecture
-class UNet(nn.Module):
+class SepUNet(nn.Module):
 
 	def __init__(self):
 
-		super(UNet, self).__init__()
+		super(SepUNet, self).__init__()
 		fs = [16,32,64,128]
 		self.conv_in = ConvBlock3(1, fs[0])
 		self.dconv1 = DownConvBlock3(fs[0], fs[1])

@@ -1,11 +1,11 @@
 import os
 import torch
-from models import UNet
+from models import SepUNet
 
 
 def init_model_and_lr(device, pretrained_path="model_results/unet_3d_best.pth"):
     """Create model and optionally load a pretrained checkpoint."""
-    model = UNet().to(device)
+    model = SepUNet().to(device)
     load_error = None
 
     if os.path.exists(pretrained_path):

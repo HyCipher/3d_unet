@@ -13,6 +13,38 @@ from augmentations.data_augmentation import apply_augmentation
 logger = logging.getLogger(__name__)
 
 
+def normalize_to_zyx(volume, patch_size, volume_path):
+    """Normalize a 3D volume to (Z, H, W) using a conservative axis heuristic."""
+    if volume.ndim != 3:
+        raise ValueError(f"Expected 3D TIFF volume, got shape {volume.shape} for {volume_path}")
+
+    # Most microscopy stacks are anisotropic; the smallest axis is typically Z.
+    if volume.shape[0] < volume.shape[1] and volume.shape[0] < volume.shape[2]:
+        zyx = volume
+        source_order = "ZHW"
+    elif volume.shape[1] < volume.shape[0] and volume.shape[1] < volume.shape[2]:
+        zyx = np.transpose(volume, (1, 0, 2))
+        source_order = "HZW"
+    elif volume.shape[2] < volume.shape[0] and volume.shape[2] < volume.shape[1]:
+        zyx = np.transpose(volume, (2, 0, 1))
+        source_order = "HWZ"
+    else:
+        raise ValueError(
+            "Cannot reliably infer Z axis from shape "
+            f"{volume.shape} for {volume_path}. "
+            "Please convert volume to (Z,H,W) explicitly."
+        )
+
+    pd, ph, pw = patch_size
+    zd, hd, wd = zyx.shape
+    if pd > zd or ph > hd or pw > wd:
+        raise ValueError(
+            f"Patch size {patch_size} does not fit volume {zyx.shape} for {volume_path}"
+        )
+
+    return zyx, source_order
+
+
 def compute_patches_per_volume(total_volume_size, patch_size):
     """Heuristic to compute how many patches to sample from each volume per epoch."""
     coverage=2.5
@@ -56,11 +88,19 @@ class Tif3DPatchDataset(Dataset):
             vol = tiff.imread(ip).astype(np.float32)
             lab = tiff.imread(lp).astype(np.float32)
 
-            # (H,W,Z) -> (Z,H,W)
-            vol = np.transpose(vol, (2, 0, 1))
-            lab = np.transpose(lab, (2, 0, 1))
+            vol, vol_order = normalize_to_zyx(vol, self.patch_size, ip)
+            lab, lab_order = normalize_to_zyx(lab, self.patch_size, lp)
 
             assert vol.shape == lab.shape
+            if logger.isEnabledFor(logging.INFO):
+                logger.info(
+                    "Loaded %s (source %s) and %s (source %s) as (Z,H,W)=%s",
+                    os.path.basename(ip),
+                    vol_order,
+                    os.path.basename(lp),
+                    lab_order,
+                    vol.shape,
+                )
 
             self.volumes.append(vol)
             self.labels.append(lab)
@@ -135,7 +175,10 @@ class Tif3DPatchDataset(Dataset):
                     raise FileNotFoundError(f"Missing hard negative mask: {mask_path}")
 
                 hard_negative_mask = tiff.imread(mask_path).astype(np.float32)
-                hard_negative_mask = np.transpose(hard_negative_mask, (2, 0, 1)) > 0
+                hard_negative_mask, _ = normalize_to_zyx(
+                    hard_negative_mask, self.patch_size, mask_path
+                )
+                hard_negative_mask = hard_negative_mask > 0
                 self.hard_negative_coords.append(np.argwhere(hard_negative_mask))
 
                 if self.hardest_negative:

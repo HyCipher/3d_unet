@@ -2,14 +2,14 @@ def tra_hyper():
     """Centralized training/validation hyperparameters."""
     return {
         "project": "c_elegans_3d_unet",
-        "architecture": "3D UNet",
+        "architecture": "3D-Sep-UNet",
         "train_img_dir": "data/training/images",
         "train_label_dir": "data/training/labels",
         "val_img_dir": "data/validation/images",
         "val_label_dir": "data/validation/labels",
         "patch_size": (8, 512, 512),
         "val_patches_per_volume": 50,
-        "batch_size": 1,
+        "batch_size": 2,
         "num_workers": 4,
         "num_epochs": 50,
         "max_val_volumes": None,
