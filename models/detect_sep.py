@@ -38,18 +38,25 @@ class CascadeConv3d(nn.Module):
 		super(CascadeConv3d, self).__init__()
 		self.conv_xy = conv1x3x3_xy(in_channels, out_channels)
 		self.conv_z = conv3x1x1_z(out_channels, out_channels)
-		# self.fusion_conv = conv1x1x1(out_channels*2, out_channels)
-		num_groups = min(8, out_channels // 2)  # Ensure at least 2 channels per group
-		self.norm = nn.GroupNorm(num_groups=num_groups, num_channels=out_channels, affine=True)
-  
+		self.fusion_conv = conv1x1x1(out_channels*2, out_channels)
+	
+		self.norm_xy = nn.GroupNorm(num_groups=min(8, out_channels // 2), num_channels=out_channels, affine=True)
+		self.norm_z = nn.GroupNorm(num_groups=min(8, out_channels // 2), num_channels=out_channels, affine=True)
+		self.norm_fusion = nn.GroupNorm(num_groups=min(8, out_channels), num_channels=out_channels, affine=True)
 
 	def forward(self, x):
 		feat_xy = self.conv_xy(x)
-		feat_z = self.conv_z(feat_xy)
-		# feat = torch.cat([feat_xy, feat_z], dim=1)
-		# x = self.fusion_conv(feat)
-		x = feat_xy + feat_z
-		x = F.relu(self.norm(x))
+		feat_xy = self.norm_xy(feat_xy)
+		feat_xy = F.relu(feat_xy)
+    
+		feat_z = self.conv_z(x)
+		feat_z = self.norm_z(feat_z)
+		feat_z = F.relu(feat_z)
+	
+		feat = torch.cat([feat_xy, feat_z], dim=1)
+		x = self.fusion_conv(feat)
+		x = self.norm_fusion(x)
+		x = F.relu(x)
 
 		return x
 
@@ -84,10 +91,12 @@ class ConvBlock3(nn.Module):
 		super(ConvBlock3, self).__init__()
 		self.conv1 = CascadeConv3d(in_channels, out_channels)
 		self.conv2 = CascadeConv3d(out_channels, out_channels)
+		self.conv3 = CascadeConv3d(out_channels, out_channels)
   
 	def forward(self, x):
 		x = self.conv1(x)
 		x = self.conv2(x)
+		x = self.conv3(x)
   
 		return x
 
@@ -98,12 +107,12 @@ class DownConvBlock3(nn.Module):
 	def __init__(self, in_channels, out_channels):
 
 		super(DownConvBlock3, self).__init__()
-		self.downsample = maxpool1x2x2()
+		self.maxpool = maxpool1x2x2()
 		self.convblock = ConvBlock3(in_channels, out_channels)
 
 	def forward(self, x):
 
-		x = self.downsample(x)
+		x = self.maxpool(x)
 		x = self.convblock(x)
 
 		return x
@@ -133,15 +142,17 @@ class SepUNet(nn.Module):
 	def __init__(self):
 
 		super(SepUNet, self).__init__()
-		fs = [16,32,64,128]
+		fs = [16,32,64,128,256]
 		self.conv_in = ConvBlock3(1, fs[0])
 		self.dconv1 = DownConvBlock3(fs[0], fs[1])
 		self.dconv2 = DownConvBlock3(fs[1], fs[2])
 		self.dconv3 = DownConvBlock3(fs[2], fs[3])
+		self.dconv4 = DownConvBlock3(fs[3], fs[4])
 		
-		self.uconv1 = UpConvBlock3(fs[3], fs[2])
-		self.uconv2 = UpConvBlock3(fs[2], fs[1])
-		self.uconv3 = UpConvBlock3(fs[1], fs[0])
+		self.uconv1 = UpConvBlock3(fs[4], fs[3])
+		self.uconv2 = UpConvBlock3(fs[3], fs[2])
+		self.uconv3 = UpConvBlock3(fs[2], fs[1])
+		self.uconv4 = UpConvBlock3(fs[1], fs[0])
 		self.conv_out = conv1x1x1(fs[0], 1)
   
 		self._initialize_weights()
@@ -152,13 +163,14 @@ class SepUNet(nn.Module):
 		x2 = self.dconv1(x1)
 		x3 = self.dconv2(x2)
 		x4 = self.dconv3(x3)
-  
-		x5 = self.uconv1(x3, x4)
-		x6 = self.uconv2(x2, x5)
-		x7 = self.uconv3(x1, x6)
-		x8 = self.conv_out(x7)
+		x5 = self.dconv4(x4)
+		x6 = self.uconv1(x4, x5)
+		x7 = self.uconv2(x3, x6)
+		x8 = self.uconv3(x2, x7)
+		x9 = self.uconv4(x1, x8)
+		x10 = self.conv_out(x9)
 
-		return x8
+		return x10
 
 
 	def _initialize_weights(self):

@@ -13,8 +13,14 @@ from utils import (
 from training import (
     build_optimizer,
     build_train_dataset,
+    export_best_onnx,
+    export_final_onnx,
     init_model_and_lr,
+    save_epoch_checkpoint,
+    save_best_model,
+    save_interrupted_checkpoint,
     train_one_epoch,
+    val_one_epoch,
 )
 
 
@@ -69,7 +75,10 @@ def train():
     wandb_config = build_wandb_config(loader, lr, controls)
     wandb_config.update(build_aug_wandb_config())
     run_name = init_wandb_run(project=wandb_config["project"], config=wandb_config)
-    
+
+    best_val_dice = 0.0
+    val_every = int(controls.get("val_every", 5))
+
     try:
         for epoch in range(controls["num_epochs"]):
             # Disable augmentation in the final epochs to reduce late-stage noise.
@@ -89,20 +98,24 @@ def train():
 
             log_training_loss(epoch=epoch + 1, train_loss=avg_epoch_loss)
 
-            # Save periodic checkpoints without running in-training validation.
+            # Save periodic checkpoints.
             if (epoch + 1) % controls["save_every"] == 0 or (epoch + 1) == controls["num_epochs"]:
-                os.makedirs(f"./model_results/{run_name}", exist_ok=True)
-                model_path = f"./model_results/{run_name}/unet_3d_epoch_{epoch + 1}.pth"
-                torch.save(model.state_dict(), model_path)
-                print(f"Model saved: {model_path}")
-                
-        finish_wandb_run()
+                save_epoch_checkpoint(model, run_name, epoch + 1)
+
+            # Validation and best-model tracking.
+            if (epoch + 1) % val_every == 0 or (epoch + 1) == controls["num_epochs"]:
+                val_dice = val_one_epoch(model, controls, device)
+                if val_dice > best_val_dice:
+                    best_val_dice = val_dice
+                    save_best_model(model, run_name, val_dice)
+                    export_best_onnx(model, controls["patch_size"], run_name, val_dice)
 
     except KeyboardInterrupt:
         print("Training interrupted by user.")
-        os.makedirs(f"./model_results/{run_name}", exist_ok=True)
-        torch.save(model.state_dict(), f"./model_results/{run_name}/unet_3d_interrupted.pth")
-        print(f"Model saved as: ./model_results/{run_name}/unet_3d_interrupted.pth")
+        save_interrupted_checkpoint(model, run_name)
+
+    finally:
+        export_final_onnx(model, controls["patch_size"], run_name)
         finish_wandb_run()
 
 

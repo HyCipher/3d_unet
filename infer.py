@@ -2,7 +2,8 @@ import tifffile as tiff
 import numpy as np
 import torch
 
-from models.detect import UNet
+from training.axis_utils import normalize_to_zyx, zyx_to_hwz
+from models import SepUNet
 from evaluation.inference import sliding_window_inference
 
 
@@ -20,14 +21,13 @@ def infer_one_volume(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # load model
-    model = UNet().to(device)
+    model = SepUNet().to(device)
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
 
     # load tif (H,W,Z)
     vol = tiff.imread(img_path).astype(np.float32)
 
-    # (H,W,Z) -> (Z,H,W)
-    vol = np.transpose(vol, (2, 0, 1))
+    vol, _ = normalize_to_zyx(vol, img_path, patch_size)
 
     print("Volume shape:", vol.shape)
 
@@ -42,10 +42,10 @@ def infer_one_volume(
     )
 
     # Save as tif (back to H,W,Z)
-    seg_save = np.transpose((seg * 255).astype(np.uint8), (1, 2, 0))
+    seg_save = zyx_to_hwz((seg * 255).astype(np.uint8), save_path)
     tiff.imwrite(save_path, seg_save)
 
-    prob_map_save = np.transpose(prob_map, (1, 2, 0))
+    prob_map_save = zyx_to_hwz(prob_map, "prob_map.tif")
     tiff.imwrite("prob_map.tif", prob_map_save.astype(np.float32))
 
     print("Saved segmentation to:", save_path)

@@ -6,45 +6,17 @@ import numpy as np
 import tifffile as tiff
 import torch
 from torch.utils.data import Dataset
-from scipy.ndimage import binary_erosion
+from training.axis_utils import normalize_to_zyx
 from augmentations.data_augmentation import apply_augmentation
+from .hard_negative_sampling import (
+    validate_hard_negative_setup,
+    build_hard_negative_coordinates,
+    choose_hard_negative_coords,
+    active_hard_negative_coords,
+)
 
 
 logger = logging.getLogger(__name__)
-
-
-def normalize_to_zyx(volume, patch_size, volume_path):
-    """Normalize a 3D volume to (Z, H, W) using a conservative axis heuristic."""
-    if volume.ndim != 3:
-        raise ValueError(f"Expected 3D TIFF volume, got shape {volume.shape} for {volume_path}")
-
-    # Most microscopy stacks are anisotropic; the smallest axis is typically Z.
-    if volume.shape[0] < volume.shape[1] and volume.shape[0] < volume.shape[2]:
-        zyx = volume
-        source_order = "ZHW"
-    elif volume.shape[1] < volume.shape[0] and volume.shape[1] < volume.shape[2]:
-        zyx = np.transpose(volume, (1, 0, 2))
-        source_order = "HZW"
-    elif volume.shape[2] < volume.shape[0] and volume.shape[2] < volume.shape[1]:
-        zyx = np.transpose(volume, (2, 0, 1))
-        source_order = "HWZ"
-    else:
-        raise ValueError(
-            "Cannot reliably infer Z axis from shape "
-            f"{volume.shape} for {volume_path}. "
-            "Please convert volume to (Z,H,W) explicitly."
-        )
-
-    pd, ph, pw = patch_size
-    zd, hd, wd = zyx.shape
-    if pd > zd or ph > hd or pw > wd:
-        raise ValueError(
-            f"Patch size {patch_size} does not fit volume {zyx.shape} for {volume_path}"
-        )
-
-    return zyx, source_order
-
-
 def compute_patches_per_volume(total_volume_size, patch_size):
     """Heuristic to compute how many patches to sample from each volume per epoch."""
     coverage=2.5
@@ -88,8 +60,8 @@ class Tif3DPatchDataset(Dataset):
             vol = tiff.imread(ip).astype(np.float32)
             lab = tiff.imread(lp).astype(np.float32)
 
-            vol, vol_order = normalize_to_zyx(vol, self.patch_size, ip)
-            lab, lab_order = normalize_to_zyx(lab, self.patch_size, lp)
+            vol, vol_order = normalize_to_zyx(vol, ip, self.patch_size)
+            lab, lab_order = normalize_to_zyx(lab, lp, self.patch_size)
 
             assert vol.shape == lab.shape
             if logger.isEnabledFor(logging.INFO):
@@ -136,18 +108,9 @@ class Tif3DPatchDataset(Dataset):
         self.hard_negative_coords = []
         self.hardest_negative_coords = []
 
-        if self.hard_negative_dir is not None:
-            hard_negative_paths = {
-                os.path.basename(path): path
-                for path in glob.glob(os.path.join(self.hard_negative_dir, "*.tif"))
-            }
-            if len(hard_negative_paths) != len(self.img_paths):
-                raise ValueError(
-                    f"Hard negative masks must match the training set size: "
-                    f"{len(hard_negative_paths)} masks for {len(self.img_paths)} volumes."
-                )
-        elif self.hard_negative_sample_ratio > 0.0:
-            raise ValueError("hard_negative_sample_ratio > 0 requires hard_negative_dir.")
+        validate_hard_negative_setup(
+            self.img_paths, self.hard_negative_dir, self.hard_negative_sample_ratio
+        )
 
         for lab in self.labels:
             pos_mask = lab > 0
@@ -168,34 +131,19 @@ class Tif3DPatchDataset(Dataset):
             edge_mask = c & (~interior)
             self.edge_coords.append(np.argwhere(edge_mask))
 
-        if self.hard_negative_dir is not None:
-            for img_path in self.img_paths:
-                mask_path = os.path.join(self.hard_negative_dir, os.path.basename(img_path))
-                if not os.path.exists(mask_path):
-                    raise FileNotFoundError(f"Missing hard negative mask: {mask_path}")
+        self.hard_negative_coords, self.hardest_negative_coords = build_hard_negative_coordinates(
+            self.img_paths,
+            self.hard_negative_dir,
+            self.patch_size,
+            normalize_to_zyx,
+            hardest_negative=self.hardest_negative,
+            hardest_negative_erosion_iters=self.hardest_negative_erosion_iters,
+        )
 
-                hard_negative_mask = tiff.imread(mask_path).astype(np.float32)
-                hard_negative_mask, _ = normalize_to_zyx(
-                    hard_negative_mask, self.patch_size, mask_path
-                )
-                hard_negative_mask = hard_negative_mask > 0
-                self.hard_negative_coords.append(np.argwhere(hard_negative_mask))
-
-                if self.hardest_negative:
-                    hardest_mask = binary_erosion(
-                        hard_negative_mask,
-                        iterations=max(self.hardest_negative_erosion_iters, 1),
-                        border_value=0,
-                    )
-                    if hardest_mask.any():
-                        self.hardest_negative_coords.append(np.argwhere(hardest_mask))
-                    else:
-                        self.hardest_negative_coords.append(np.argwhere(hard_negative_mask))
-
-        active_hard_negative_coords = (
-            self.hardest_negative_coords
-            if self.hardest_negative and self.hardest_negative_coords
-            else self.hard_negative_coords
+        active_coords = active_hard_negative_coords(
+            self.hard_negative_coords,
+            self.hardest_negative_coords,
+            hardest_negative=self.hardest_negative,
         )
         if logger.isEnabledFor(logging.INFO):
             logger.info(
@@ -203,7 +151,7 @@ class Tif3DPatchDataset(Dataset):
                 self.volume_patch_counts,
                 [len(c) for c in self.pos_coords],
                 [len(c) for c in self.edge_coords],
-                [len(c) for c in active_hard_negative_coords],
+                [len(c) for c in active_coords],
             )
 
     def __len__(self):
@@ -224,10 +172,12 @@ class Tif3DPatchDataset(Dataset):
         elif r < (self.pos_sample_ratio + self.edge_sample_ratio):
             coords = self.edge_coords[vid]
         elif r < (self.pos_sample_ratio + self.edge_sample_ratio + self.hard_negative_sample_ratio):
-            if self.hardest_negative and self.hardest_negative_coords:
-                coords = self.hardest_negative_coords[vid]
-            else:
-                coords = self.hard_negative_coords[vid]
+            coords = choose_hard_negative_coords(
+                vid,
+                self.hard_negative_coords,
+                self.hardest_negative_coords,
+                hardest_negative=self.hardest_negative,
+            )
         else:
             coords = None
 

@@ -6,6 +6,7 @@ import tifffile as tiff
 import torch
 import wandb
 
+from training.axis_utils import normalize_to_zyx
 from config.val_config import get_validation_config
 from validate.metrics import dice_coefficient, iou_score, precision_recall_f1_specificity
 from evaluation import (
@@ -126,8 +127,8 @@ def evaluate_model_onnx(
         vol = tiff.imread(img_path).astype(np.float32)
         lab = tiff.imread(label_path).astype(np.float32)
 
-        vol = np.transpose(vol, (2, 0, 1))
-        lab = np.transpose(lab, (2, 0, 1))
+        vol, _ = normalize_to_zyx(vol, img_path, patch_size)
+        lab, _ = normalize_to_zyx(lab, label_path, patch_size)
 
         prob_map, pred_seg, sample_loss = sliding_window_inference_onnx(
             vol,

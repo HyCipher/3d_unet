@@ -6,7 +6,8 @@ import torch
 import wandb
 import matplotlib.pyplot as plt
 
-from models import UNet
+from training.axis_utils import normalize_to_zyx
+from models import SepUNet
 from config.val_config import get_validation_config
 from validate.metrics import dice_coefficient, iou_score, precision_recall_f1_specificity
 from evaluation import (
@@ -42,7 +43,7 @@ def evaluate_model(
 ):
     # Set device and load model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = UNet().to(device)
+    model = SepUNet().to(device)
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
@@ -81,9 +82,8 @@ def evaluate_model(
                     f"Expected 3D volumes for '{sample_name}', got image ndim={vol.ndim}, label ndim={lab.ndim}."
                 )
 
-            # (H, W, Z) -> (Z, H, W)
-            vol = np.transpose(vol, (2, 0, 1))
-            lab = np.transpose(lab, (2, 0, 1))
+            vol, _ = normalize_to_zyx(vol, img_path, patch_size)
+            lab, _ = normalize_to_zyx(lab, label_path, patch_size)
 
             if vol.shape != lab.shape:
                 raise ValueError(

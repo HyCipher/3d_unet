@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import tifffile as tiff
 from scipy.ndimage import binary_erosion
+from training.axis_utils import normalize_to_zyx, zyx_to_hwz
 
 
 def ensure_dir(path: Path) -> None:
@@ -24,18 +25,6 @@ def link_or_copy(src: Path, dst: Path) -> None:
 
 def load_tif(path: Path) -> np.ndarray:
     return tiff.imread(path)
-
-
-def to_zyx(volume: np.ndarray) -> np.ndarray:
-    if volume.ndim != 3:
-        raise ValueError(f"Expected 3D volume, got shape {volume.shape}")
-    return np.transpose(volume, (2, 0, 1))
-
-
-def to_hwy(volume: np.ndarray) -> np.ndarray:
-    if volume.ndim != 3:
-        raise ValueError(f"Expected 3D volume, got shape {volume.shape}")
-    return np.transpose(volume, (1, 2, 0))
 
 
 def edge_mask_from_gt(gt_zyx: np.ndarray) -> np.ndarray:
@@ -191,8 +180,10 @@ def main() -> None:
                 f"Shape mismatch for pred={pred_name}: prob={prob_map.shape}, label={label.shape}"
             )
 
-        prob_map_zyx = to_zyx(prob_map).astype(np.float32)
-        gt_zyx = to_zyx(label).astype(np.float32)
+        prob_map_zyx, _ = normalize_to_zyx(prob_map, str(pred_path))
+        prob_map_zyx = prob_map_zyx.astype(np.float32)
+        gt_zyx, _ = normalize_to_zyx(label, str(label_lookup[label_name]))
+        gt_zyx = gt_zyx.astype(np.float32)
         pos_mask = gt_zyx > 0
         edge_mask = edge_mask_from_gt(gt_zyx)
         fp_mask = build_fp_mask(
@@ -216,7 +207,7 @@ def main() -> None:
         link_or_copy(label_lookup[label_name], label_out / label_name)
 
         if args.enable_hard_negative:
-            tiff.imwrite(mask_out / image_name, to_hwy(fp_mask.astype(np.uint8) * 255))
+            tiff.imwrite(mask_out / image_name, zyx_to_hwz(fp_mask.astype(np.uint8) * 255, image_name))
 
         per_volume_stats.append(
             {
