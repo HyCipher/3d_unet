@@ -25,4 +25,14 @@ def tra_hyper():
         "disable_aug_last_epochs": 8, # Number of final epochs to disable augmentation (to reduce late-stage noise)
         "dice_weight": 0.8,
         "focal_weight": 1.0,
+        
+        # --- Patch sampling ratios (must sum <= 1.0; remainder is random) ---
+        "pos_sample_ratio": 0.2,            # Foreground (GT > 0) centered patches
+        "edge_sample_ratio": 0.1,           # GT boundary voxel centered patches
+        "hard_negative_enable": True,      # Enable hard-negative/positive sampling
+        "hard_negative_dir": "data/hard_sampling/hard_negative_masks",          # Path to hard_negative_masks/ directory
+        "hard_negative_sample_ratio": 0.2,  # Predicted CC with zero GT overlap
+        "hard_positive_sample_ratio": 0.1,  # GT CC with zero prediction overlap
+        "hardest_negative": False,          # Use eroded core of hard-negative mask
+        "hardest_negative_erosion_iters": 1,
     }
