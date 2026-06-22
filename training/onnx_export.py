@@ -15,7 +15,7 @@ def _do_export(model, patch_size, onnx_path):
                 sample_input,
                 onnx_path,
                 export_params=True,
-                opset_version=17,
+                opset_version=18,
                 do_constant_folding=True,
                 input_names=["input"],
                 output_names=["logits"],

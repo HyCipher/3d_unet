@@ -8,9 +8,10 @@ import torch
 from torch.utils.data import Dataset
 from training.axis_utils import normalize_to_zyx
 from augmentations.data_augmentation import apply_augmentation
-from .hard_negative_sampling import (
+from .hard_sampling import (
     validate_hard_negative_setup,
     build_hard_negative_coordinates,
+    build_hard_positive_coordinates,
     choose_hard_negative_coords,
     active_hard_negative_coords,
 )
@@ -40,10 +41,11 @@ class Tif3DPatchDataset(Dataset):
         label_dir,
         patch_size=(4, 128, 128),
         augment=True,
-        pos_sample_ratio=0.4,
+        pos_sample_ratio=0.2,
         edge_sample_ratio=0.1,
         hard_negative_dir=None,
         hard_negative_sample_ratio=0.0,
+        hard_positive_sample_ratio=0.0,
         hardest_negative=False,
         hardest_negative_erosion_iters=1,
     ):
@@ -88,6 +90,7 @@ class Tif3DPatchDataset(Dataset):
         self.edge_sample_ratio = float(edge_sample_ratio)
         self.hard_negative_dir = hard_negative_dir
         self.hard_negative_sample_ratio = float(hard_negative_sample_ratio)
+        self.hard_positive_sample_ratio = float(hard_positive_sample_ratio)
         self.hardest_negative = bool(hardest_negative)
         self.hardest_negative_erosion_iters = int(hardest_negative_erosion_iters)
 
@@ -95,11 +98,18 @@ class Tif3DPatchDataset(Dataset):
             self.pos_sample_ratio < 0.0
             or self.edge_sample_ratio < 0.0
             or self.hard_negative_sample_ratio < 0.0
+            or self.hard_positive_sample_ratio < 0.0
         ):
             raise ValueError("Sampling ratios must be non-negative.")
-        if self.pos_sample_ratio + self.edge_sample_ratio + self.hard_negative_sample_ratio > 1.0:
+        if (
+            self.pos_sample_ratio
+            + self.edge_sample_ratio
+            + self.hard_negative_sample_ratio
+            + self.hard_positive_sample_ratio
+            > 1.0
+        ):
             raise ValueError(
-                "pos_sample_ratio + edge_sample_ratio + hard_negative_sample_ratio must be <= 1.0."
+                "pos_sample_ratio + edge_sample_ratio + hard_negative_sample_ratio + hard_positive_sample_ratio must be <= 1.0."
             )
 
         # Cache positive coordinates to avoid scanning the full volume every __getitem__ call.
@@ -107,9 +117,13 @@ class Tif3DPatchDataset(Dataset):
         self.edge_coords = []
         self.hard_negative_coords = []
         self.hardest_negative_coords = []
+        self.hard_positive_coords = []
 
         validate_hard_negative_setup(
-            self.img_paths, self.hard_negative_dir, self.hard_negative_sample_ratio
+            self.img_paths,
+            self.hard_negative_dir,
+            self.hard_negative_sample_ratio,
+            self.hard_positive_sample_ratio,
         )
 
         for lab in self.labels:
@@ -133,11 +147,19 @@ class Tif3DPatchDataset(Dataset):
 
         self.hard_negative_coords, self.hardest_negative_coords = build_hard_negative_coordinates(
             self.img_paths,
+            self.labels,
             self.hard_negative_dir,
             self.patch_size,
             normalize_to_zyx,
             hardest_negative=self.hardest_negative,
             hardest_negative_erosion_iters=self.hardest_negative_erosion_iters,
+        )
+        self.hard_positive_coords = build_hard_positive_coordinates(
+            self.img_paths,
+            self.labels,
+            self.hard_negative_dir,
+            self.patch_size,
+            normalize_to_zyx,
         )
 
         active_coords = active_hard_negative_coords(
@@ -153,6 +175,7 @@ class Tif3DPatchDataset(Dataset):
                 [len(c) for c in self.edge_coords],
                 [len(c) for c in active_coords],
             )
+            logger.info("hard positives cached: %s", [len(c) for c in self.hard_positive_coords])
 
     def __len__(self):
         return self.total_patches
@@ -171,13 +194,24 @@ class Tif3DPatchDataset(Dataset):
             coords = self.pos_coords[vid]
         elif r < (self.pos_sample_ratio + self.edge_sample_ratio):
             coords = self.edge_coords[vid]
-        elif r < (self.pos_sample_ratio + self.edge_sample_ratio + self.hard_negative_sample_ratio):
+        elif r < (
+            self.pos_sample_ratio
+            + self.edge_sample_ratio
+            + self.hard_negative_sample_ratio
+        ):
             coords = choose_hard_negative_coords(
                 vid,
                 self.hard_negative_coords,
                 self.hardest_negative_coords,
                 hardest_negative=self.hardest_negative,
             )
+        elif r < (
+            self.pos_sample_ratio
+            + self.edge_sample_ratio
+            + self.hard_negative_sample_ratio
+            + self.hard_positive_sample_ratio
+        ):
+            coords = self.hard_positive_coords[vid]
         else:
             coords = None
 

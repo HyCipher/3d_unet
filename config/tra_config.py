@@ -16,7 +16,7 @@ def tra_hyper():
         "val_patch_size": (8, 512, 512),
         "val_stride": (4, 256, 256),
         "val_threshold": 0.1,
-        "dust_remove_min_size": 64,
+        "dust_remove_min_size": 128,
         "loss_type": "bce",  # "bce" | "focal" | "dicefocal"
         "save_every": 10,
         "eval_train_set": False, # Set to True to evaluate training set each epoch (slows down training)

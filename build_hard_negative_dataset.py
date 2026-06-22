@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import tifffile as tiff
 from scipy.ndimage import binary_erosion
+from scipy import ndimage
 from training.axis_utils import normalize_to_zyx, zyx_to_hwz
 
 
@@ -43,19 +44,45 @@ def edge_mask_from_gt(gt_zyx: np.ndarray) -> np.ndarray:
     return center & (~interior)
 
 
-def build_fp_mask(
+def build_prediction_mask(
     prob_map_zyx: np.ndarray,
-    gt_zyx: np.ndarray,
     threshold: float,
     hardest_negative: bool,
     erosion_iters: int,
 ) -> np.ndarray:
-    fp_mask = (prob_map_zyx > threshold) & (gt_zyx == 0)
+    pred_mask = prob_map_zyx > threshold
     if hardest_negative:
-        core_mask = binary_erosion(fp_mask, iterations=max(erosion_iters, 1), border_value=0)
+        core_mask = binary_erosion(pred_mask, iterations=max(erosion_iters, 1), border_value=0)
         if core_mask.any():
-            fp_mask = core_mask
-    return fp_mask
+            pred_mask = core_mask
+    return pred_mask
+
+
+def component_masks_from_overlap(pred_mask: np.ndarray, gt_mask: np.ndarray):
+    """Return hard-negative/hard-positive masks under connected-component overlap rules."""
+    structure = ndimage.generate_binary_structure(3, 1)
+
+    labeled_pred, n_pred = ndimage.label(pred_mask, structure=structure)
+    hard_negative_mask = np.zeros_like(pred_mask, dtype=bool)
+    if n_pred > 0:
+        pred_overlap_counts = np.bincount(labeled_pred[gt_mask], minlength=n_pred + 1)
+        pred_overlap = pred_overlap_counts > 0
+        keep_pred = np.ones(n_pred + 1, dtype=bool)
+        keep_pred[0] = False
+        keep_pred[pred_overlap] = False
+        hard_negative_mask = keep_pred[labeled_pred]
+
+    labeled_gt, n_gt = ndimage.label(gt_mask, structure=structure)
+    hard_positive_mask = np.zeros_like(gt_mask, dtype=bool)
+    if n_gt > 0:
+        gt_overlap_counts = np.bincount(labeled_gt[pred_mask], minlength=n_gt + 1)
+        gt_overlap = gt_overlap_counts > 0
+        keep_gt = np.ones(n_gt + 1, dtype=bool)
+        keep_gt[0] = False
+        keep_gt[gt_overlap] = False
+        hard_positive_mask = keep_gt[labeled_gt]
+
+    return hard_negative_mask, hard_positive_mask
 
 
 def parse_args() -> argparse.Namespace:
@@ -186,17 +213,18 @@ def main() -> None:
         gt_zyx = gt_zyx.astype(np.float32)
         pos_mask = gt_zyx > 0
         edge_mask = edge_mask_from_gt(gt_zyx)
-        fp_mask = build_fp_mask(
+        pred_mask = build_prediction_mask(
             prob_map_zyx=prob_map_zyx,
-            gt_zyx=gt_zyx,
             threshold=args.threshold,
             hardest_negative=args.hardest_negative,
             erosion_iters=args.erosion_iters,
         )
+        hard_negative_mask, hard_positive_mask = component_masks_from_overlap(pred_mask, pos_mask)
 
         pos_voxels = int(pos_mask.sum())
         edge_voxels = int(edge_mask.sum())
-        hard_negative_voxels = int(fp_mask.sum())
+        hard_negative_voxels = int(hard_negative_mask.sum())
+        hard_positive_voxels = int(hard_positive_mask.sum())
         random_voxels = int(gt_zyx.size - hard_negative_voxels - pos_voxels)
 
         total_pos_voxels += pos_voxels
@@ -207,7 +235,9 @@ def main() -> None:
         link_or_copy(label_lookup[label_name], label_out / label_name)
 
         if args.enable_hard_negative:
-            tiff.imwrite(mask_out / image_name, zyx_to_hwz(fp_mask.astype(np.uint8) * 255, image_name))
+            # Save predicted components (not pre-filtered FP-only mask); training code derives
+            # hard-negative/hard-positive via component-overlap against GT.
+            tiff.imwrite(mask_out / image_name, zyx_to_hwz(pred_mask.astype(np.uint8) * 255, image_name))
 
         per_volume_stats.append(
             {
@@ -217,6 +247,7 @@ def main() -> None:
                 "pos_voxels": pos_voxels,
                 "edge_voxels": edge_voxels,
                 "hard_negative_voxels": hard_negative_voxels,
+                "hard_positive_voxels": hard_positive_voxels,
                 "random_voxels": random_voxels,
             }
         )
@@ -224,7 +255,7 @@ def main() -> None:
         print(
             f"[hard_negative] pred={pred_name} -> image={image_name}, label={label_name}: "
             f"pos={pos_voxels}, edge={edge_voxels}, "
-            f"hard_negative={hard_negative_voxels}, random={random_voxels}"
+            f"hard_negative={hard_negative_voxels}, hard_positive={hard_positive_voxels}, random={random_voxels}"
         )
 
     config = {

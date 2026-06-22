@@ -8,17 +8,17 @@ def conv3x3x3(in_channels, out_channels):
                      kernel_size=3, stride=1, padding=1, bias=True)
 
 def maxpool2x2x2():
-    return nn.MaxPool3d(kernel_size=2, stride=2, padding=0)
+    return nn.MaxPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2), padding=0)
 
 class UpConv2x2x2(nn.Module):
     def __init__(self, channels):
         super(UpConv2x2x2, self).__init__()
         self.conv = nn.Conv3d(channels, channels // 2,
-                              kernel_size=2, stride=1, padding=0, bias=True)
+                              kernel_size=(1, 2, 2), stride=1, padding=0, bias=True)
     
     def forward(self, x):
-        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=True)
-        x = F.pad(x, (0,1,0,1,0,1))  # 3D padding
+        x = F.interpolate(x, scale_factor=(1, 2, 2), mode='trilinear', align_corners=True)
+        x = F.pad(x, (0, 1, 0, 1, 0, 0))  # Pad H/W only to match conv kernel.
         x = self.conv(x)
         return x
 

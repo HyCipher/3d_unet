@@ -37,7 +37,7 @@ class CascadeConv3d(nn.Module):
 
 		super(CascadeConv3d, self).__init__()
 		self.conv_xy = conv1x3x3_xy(in_channels, out_channels)
-		self.conv_z = conv3x1x1_z(out_channels, out_channels)
+		self.conv_z = conv3x1x1_z(in_channels, out_channels)
 		self.fusion_conv = conv1x1x1(out_channels*2, out_channels)
 	
 		self.norm_xy = nn.GroupNorm(num_groups=min(8, out_channels // 2), num_channels=out_channels, affine=True)

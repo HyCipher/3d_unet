@@ -13,6 +13,9 @@ def build_train_dataset(controls, augment):
         hard_negative_sample_ratio=float(controls.get("hard_negative_sample_ratio", 0.0))
         if controls.get("hard_negative_enable", False)
         else 0.0,
+        hard_positive_sample_ratio=float(controls.get("hard_positive_sample_ratio", 0.0))
+        if controls.get("hard_negative_enable", False)
+        else 0.0,
         hardest_negative=bool(controls.get("hardest_negative", False)),
         hardest_negative_erosion_iters=int(controls.get("hardest_negative_erosion_iters", 1)),
     )
