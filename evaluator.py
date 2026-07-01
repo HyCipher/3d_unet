@@ -7,7 +7,7 @@ import wandb
 import matplotlib.pyplot as plt
 
 from training.axis_utils import normalize_to_zyx
-from models import SepUNet
+from models import UNet3D
 from config.val_config import get_validation_config
 from validate.metrics import dice_coefficient, iou_score, precision_recall_f1_specificity
 from evaluation import (
@@ -43,7 +43,7 @@ def evaluate_model(
 ):
     # Set device and load model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SepUNet().to(device)
+    model = UNet3D().to(device)
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
