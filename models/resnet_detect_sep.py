@@ -147,11 +147,11 @@ class UpConvBlock3(nn.Module):
 
 
 # Network architecture
-class SepUNet(nn.Module):
+class ResSepUNet(nn.Module):
 
 	def __init__(self):
 
-		super(SepUNet, self).__init__()
+		super(ResSepUNet, self).__init__()
 		fs = [16,32,64,128,256]
 		self.conv_in = ConvBlock3(1, fs[0])
 		self.dconv1 = DownConvBlock3(fs[0], fs[1])

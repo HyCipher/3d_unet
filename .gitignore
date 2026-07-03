@@ -6,3 +6,4 @@ output/
 wandb/
 validation_results/
 wandb.ipynb
+data_origin/
